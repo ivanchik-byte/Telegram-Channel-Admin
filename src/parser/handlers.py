@@ -29,16 +29,29 @@ async def new_message_handler(event: events.NewMessage.Event):
 
     async with async_session_maker() as session:
 
+        from sqlalchemy import select
+        from src.database.models import ProcessedPost
+        
+        dup_stmt = select(ProcessedPost.id).where(ProcessedPost.post_hash == post_hash).limit(1)
+        dup_result = await session.execute(dup_stmt)
+        is_duplicate = dup_result.scalar() is not None
+        
+        status = 'duplicate_content' if is_duplicate else 'seen'
+
         post_id = await PostRepository.process_new_post(
             session=session,
             channel_id=channel_id,
             message_id=message_id,
             post_hash=post_hash,
-            text=text
+            text=text,
+            status=status
         )
 
         if not post_id:
-            logger.info(f"[Parser] Пост проигнорирован: дубликат. Channel: {channel_id}, MsgID: {message_id}")
+            return
+        
+        if is_duplicate:
+            logger.info(f"[Parser] Пост {channel_id}:{message_id} - дубликат контента. Отправка в Arq отменена.")
             return
         
         logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}.")

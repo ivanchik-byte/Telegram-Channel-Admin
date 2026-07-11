@@ -1,8 +1,8 @@
-"""Initial
+"""Init
 
-Revision ID: 2e6e82b0e7d9
+Revision ID: 7e65b908e8e2
 Revises: 
-Create Date: 2026-07-11 22:17:21.776149
+Create Date: 2026-07-11 22:34:01.911799
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '2e6e82b0e7d9'
+revision: str = '7e65b908e8e2'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -29,6 +29,7 @@ def upgrade() -> None:
     sa.Column('text', sa.Text(), nullable=False),
     sa.Column('rewritten_text', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.CheckConstraint("status IN ('seen', 'queued', 'ai_processing', 'processed', 'failed', 'moderating', 'published', 'rejected', 'filtered_ad', 'duplicate_content')", name='chk_status'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('source_channel_id', 'source_message_id', name='uq_source_msg')
     )

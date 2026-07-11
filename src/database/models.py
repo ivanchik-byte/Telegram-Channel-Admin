@@ -19,9 +19,8 @@ class ProcessedPost(Base):
 
     __table_args__ = (
         UniqueConstraint('source_channel_id', 'source_message_id', name='uq_source_msg'),
-        UniqueConstraint('post_hash', name='uq_post_hash'),
         CheckConstraint(
-            "status IN ('seen', 'queued', 'ai_processing', 'processed', 'failed', 'moderating', 'published', 'rejected', 'filtered_ad')",
+            "status IN ('seen', 'queued', 'ai_processing', 'processed', 'failed', 'moderating', 'published', 'rejected', 'filtered_ad', 'duplicate_content')",
             name='chk_status'
         ),
     )
