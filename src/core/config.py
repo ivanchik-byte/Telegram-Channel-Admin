@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, validator, Json
+from pydantic import Field, field_validator, Json
 from typing import List, Union
 
 class Settings(BaseSettings):
@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     
     ADMIN_IDS: list[int] = Field(default_factory=list)
 
-    @validator('ADMIN_IDS', pre=True)
+    @field_validator('ADMIN_IDS', mode='before')
+    @classmethod
     def parse_admin_ids(cls, v):
         if isinstance(v, str):
             if not v.strip():

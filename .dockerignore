@@ -1,0 +1,14 @@
+.git/
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+data/*.session
+data/*.session-journal
+.env
+alembic/versions/
+*.md

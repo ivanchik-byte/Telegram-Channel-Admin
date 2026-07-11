@@ -7,14 +7,11 @@ from aiogram import Bot
 
 async def startup(ctx):
     logger.info("Arq worker is starting...")
-    bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    await bot.get_me() # Validate token, throws on error
-    ctx['bot'] = bot
+    async with Bot(token=settings.TELEGRAM_BOT_TOKEN) as bot:
+        await bot.get_me() # Validate token, throws on error
 
 async def shutdown(ctx):
     logger.info("Arq worker is shutting down...")
-    if 'bot' in ctx:
-        await ctx['bot'].session.close()
 
 class WorkerSettings:
     functions = [process_post_task]

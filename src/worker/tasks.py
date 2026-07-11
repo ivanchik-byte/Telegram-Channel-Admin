@@ -32,30 +32,31 @@ def contains_ad(text: str) -> bool:
 
 async def send_moderation_card(ctx, session, post_id: int, source_channel_id: int, text: str):
     try:
+        from aiogram import Bot
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         from aiogram.enums import ParseMode
         
-        bot = ctx['bot']
-            
+        from src.core.i18n import i18n
         display_text = text[:4000]
-        text_to_send = f"<b>Новый пост из источника {source_channel_id}</b>\n\n{display_text}"
+        text_to_send = f"{i18n.get('card_new_post', channel_id=source_channel_id)}\n\n{display_text}"
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish_{post_id}"),
-                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{post_id}")
+                InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
+                InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
             ],
             [
-                InlineKeyboardButton(text="✏️ Править", callback_data=f"edit_{post_id}")
+                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}")
             ]
         ])
         
-        await bot.send_message(
-            chat_id=settings.MODERATOR_CHAT_ID,
-            text=text_to_send,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
+        async with Bot(token=settings.TELEGRAM_BOT_TOKEN) as bot:
+            await bot.send_message(
+                chat_id=settings.MODERATOR_CHAT_ID,
+                text=text_to_send,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
         
         await PostRepository.update_status(session, post_id, 'moderating')
         logger.info(f"[Worker] Пост {post_id} отправлен на модерацию.")
