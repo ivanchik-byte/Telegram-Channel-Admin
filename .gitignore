@@ -1,5 +1,6 @@
 .env
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -7,8 +8,9 @@ __pycache__/
 env/
 venv/
 .venv/
-data/*.session
-data/*.session-journal
+data/
+*.session
+*.session-journal
 *.md
 !README.md
 .idea/
