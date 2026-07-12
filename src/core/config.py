@@ -33,6 +33,8 @@ class Settings(BaseSettings):
             if not v.strip():
                 return []
             return [int(x.strip()) for x in v.split(',') if x.strip()]
+        if isinstance(v, int):
+            return [v]
         return v
 
     

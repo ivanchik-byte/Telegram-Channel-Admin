@@ -50,13 +50,12 @@ async def send_moderation_card(ctx, session, post_id: int, source_channel_id: in
             ]
         ])
         
-        async with Bot(token=settings.TELEGRAM_BOT_TOKEN) as bot:
-            await bot.send_message(
-                chat_id=settings.MODERATOR_CHAT_ID,
-                text=text_to_send,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML
-            )
+        bot = ctx['bot']
+        await bot.send_message(
+            chat_id=settings.MODERATOR_CHAT_ID,
+            text=text_to_send,
+            reply_markup=keyboard
+        )
         
         await PostRepository.update_status(session, post_id, 'moderating')
         logger.info(f"[Worker] Пост {post_id} отправлен на модерацию.")
@@ -77,7 +76,37 @@ async def process_post_task(ctx, post_id: int):
             logger.warning(f"[Worker] Пост {post_id} не найден или не содержит текста.")
             return
 
-
+        if post.status == 'duplicate_content':
+            # Check original post
+            orig_stmt = select(ProcessedPost).where(
+                ProcessedPost.post_hash == post.post_hash, 
+                ProcessedPost.id != post.id,
+                ProcessedPost.rewritten_text.isnot(None)
+            ).order_by(ProcessedPost.id.desc()).limit(1)
+            orig_result = await session.execute(orig_stmt)
+            orig_post = orig_result.scalars().first()
+            
+            if not orig_post:
+                # Check if original is still processing
+                any_orig_stmt = select(ProcessedPost).where(
+                    ProcessedPost.post_hash == post.post_hash,
+                    ProcessedPost.id != post.id
+                ).limit(1)
+                any_result = await session.execute(any_orig_stmt)
+                if any_result.scalars().first():
+                    # Defer if processing
+                    logger.warning(f"[Worker] Оригинал для дубликата {post_id} еще в обработке. Откладываем (retry).")
+                    raise RuntimeError("Original post is still processing")
+                else:
+                    logger.error(f"[Worker] Оригинал для дубликата {post_id} не найден. Отмена.")
+                    await PostRepository.update_status(session, post_id, 'failed')
+                    return
+            
+            # Copy rewritten text
+            await PostRepository.update_post_success(session, post_id, orig_post.rewritten_text)
+            logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст и передан на модерацию.")
+            await send_moderation_card(ctx, session, post_id, post.source_channel_id, orig_post.rewritten_text)
+            return
 
         text = post.text
 

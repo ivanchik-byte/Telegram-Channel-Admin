@@ -51,10 +51,9 @@ async def new_message_handler(event: events.NewMessage.Event):
             return
         
         if is_duplicate:
-            logger.info(f"[Parser] Пост {channel_id}:{message_id} - дубликат контента. Отправка в Arq отменена.")
-            return
-        
-        logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}.")
+            logger.info(f"[Parser] Пост {channel_id}:{message_id} - дубликат контента (отправлен в очередь).")
+        else:
+            logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}.")
         
         # Update status to queued and strictly commit before enqueueing to Arq
         await PostRepository.update_status(session, post_id, 'queued')
