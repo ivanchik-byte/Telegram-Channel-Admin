@@ -3,7 +3,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import ProcessedPost
 import logging
-import sqlalchemy.exc
 
 logger = logging.getLogger("TG_Admin")
 
@@ -11,9 +10,9 @@ class PostRepository:
     @staticmethod
     async def process_new_post(session: AsyncSession, channel_id: int, message_id: int, post_hash: str, text: str, status: str = 'seen'):
         """
-        Uses atomic UPSERT (insert ... on conflict do nothing) to prevent race conditions.
+        Атомарный UPSERT: insert ... on conflict do nothing.
+        Возвращает id нового поста или None при дубликате.
         """
-        # Atomic insert using postgresql dialect
         stmt = insert(ProcessedPost).values(
             source_channel_id=channel_id,
             source_message_id=message_id,
@@ -23,7 +22,7 @@ class PostRepository:
         ).on_conflict_do_nothing(
             index_elements=['source_channel_id', 'source_message_id']
         ).returning(ProcessedPost.id)
-        
+
         try:
             result = await session.execute(stmt)
             post_id = result.scalars().first()
@@ -35,25 +34,33 @@ class PostRepository:
             raise
 
     @staticmethod
-    async def update_status(session: AsyncSession, post_id: int, new_status: str):
-        stmt = update(ProcessedPost).where(ProcessedPost.id == post_id).values(status=new_status)
-        await session.execute(stmt)
-        await session.commit()
-
-    @staticmethod
-    async def get_post_text(session: AsyncSession, post_id: int):
-        stmt = select(ProcessedPost.text).where(ProcessedPost.id == post_id)
+    async def update_status(session: AsyncSession, post_id: int, new_status: str, required_current_status: str | None = None):
+        """
+        Обновляет статус поста.
+        Если указан required_current_status — UPDATE срабатывает только при совпадении текущего статуса,
+        защищая от гонок при ретраях arq.
+        """
+        stmt = update(ProcessedPost).where(ProcessedPost.id == post_id)
+        if required_current_status is not None:
+            stmt = stmt.where(ProcessedPost.status == required_current_status)
+        stmt = stmt.values(status=new_status)
         result = await session.execute(stmt)
-        return result.scalars().first()
+        await session.commit()
+        return result.rowcount > 0
 
     @staticmethod
-    async def update_post_ready_for_moderation(session: AsyncSession, post_id: int, rewritten_text: str):
-        stmt = update(ProcessedPost).where(ProcessedPost.id == post_id).values(
-            rewritten_text=rewritten_text, 
+    async def update_post_ready_for_moderation(session: AsyncSession, post_id: int, rewritten_text: str, required_current_status: str | None = None):
+        """Атомарно сохраняет rewritten_text и переводит пост в 'moderating'."""
+        stmt = update(ProcessedPost).where(ProcessedPost.id == post_id)
+        if required_current_status is not None:
+            stmt = stmt.where(ProcessedPost.status == required_current_status)
+        stmt = stmt.values(
+            rewritten_text=rewritten_text,
             status='moderating'
         )
-        await session.execute(stmt)
+        result = await session.execute(stmt)
         await session.commit()
+        return result.rowcount > 0
 
     @staticmethod
     async def get_post_by_id(session: AsyncSession, post_id: int):
@@ -63,6 +70,7 @@ class PostRepository:
 
     @staticmethod
     async def atomic_status_update(session: AsyncSession, post_id: int, required_current_status: str, new_status: str):
+        """UPDATE WHERE status = required → new_status. Возвращает пост или None (не прошёл условие)."""
         stmt = update(ProcessedPost).where(
             ProcessedPost.id == post_id,
             ProcessedPost.status == required_current_status
@@ -74,6 +82,7 @@ class PostRepository:
 
     @staticmethod
     async def atomic_edit_text(session: AsyncSession, post_id: int, required_current_status: str, new_text: str):
+        """UPDATE WHERE status = required → new rewritten_text. Возвращает пост или None."""
         stmt = update(ProcessedPost).where(
             ProcessedPost.id == post_id,
             ProcessedPost.status == required_current_status

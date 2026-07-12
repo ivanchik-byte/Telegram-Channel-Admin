@@ -36,7 +36,12 @@ async def main():
     await client.start()
     logger.info(f"Parser is running and tracking channels: {channels}")
     
-    await client.run_until_disconnected()
+    try:
+        await client.run_until_disconnected()
+    finally:
+        if hasattr(client, 'redis_pool') and client.redis_pool:
+            await client.redis_pool.close()
+            logger.info("Redis pool closed.")
 
 if __name__ == "__main__":
     asyncio.run(main())
