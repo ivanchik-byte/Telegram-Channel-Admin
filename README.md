@@ -74,7 +74,7 @@ docker compose logs -f
 | `POSTGRES_DB` | Имя базы данных PostgreSQL (например, `tg_bot_db`) |
 | `POSTGRES_USER` | Пользователь БД |
 | `POSTGRES_PASSWORD` | Пароль БД |
-| `DB_URL` | Асинхронный URL для подключения (например, `postgresql+asyncpg://user:pass@db:5432/tg_bot_db`) |
+| `DATABASE_URL` | Асинхронный URL для подключения (например, `postgresql+asyncpg://user:pass@db:5432/tg_bot_db`) |
 | `REDIS_URL` | Подключение к Redis (например, `redis://redis:6379/0`) |
 | `TELEGRAM_BOT_TOKEN` | Токен модераторского бота от @BotFather |
 | `ADMIN_IDS` | ID администраторов (модераторов) через запятую |

@@ -1,4 +1,7 @@
-import os
+import logging
+from src.core.config import settings
+
+_logger = logging.getLogger("TG_Admin")
 
 TRANSLATIONS = {
     'ru': {
@@ -53,10 +56,10 @@ class I18n:
         if kwargs:
             try:
                 text = text.format(**kwargs)
-            except KeyError:
-                pass
+            except KeyError as ke:
+                missing_key = ke.args[0] if ke.args else str(ke)
+                _logger.warning(f"[i18n] Missing format key '{missing_key}' for i18n string '{key}' (lang={self.lang})")
         return text
 
-# Global instance based on env
-current_language = os.getenv('LANGUAGE', 'ru')
-i18n = I18n(default_lang=current_language)
+# Global instance — reads from pydantic settings, consistent with the rest of the codebase
+i18n = I18n(default_lang=settings.LANGUAGE)

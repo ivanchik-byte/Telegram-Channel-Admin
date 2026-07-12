@@ -10,5 +10,4 @@ __pycache__/
 data/*.session
 data/*.session-journal
 .env
-alembic/versions/
 *.md

@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     
     ADMIN_IDS: list[int] = Field(default_factory=list)
 
+    # UI Language
+    LANGUAGE: str = 'ru'
+
     @field_validator('ADMIN_IDS', mode='before')
     @classmethod
     def parse_admin_ids(cls, v):

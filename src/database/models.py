@@ -12,10 +12,14 @@ class ProcessedPost(Base):
     source_channel_id: Mapped[int] = mapped_column(BigInteger, index=True)
     source_message_id: Mapped[int] = mapped_column(BigInteger, index=True)
     post_hash: Mapped[str] = mapped_column(String(64), index=True)
-    status: Mapped[str] = mapped_column(String(20), default='seen')
+    status: Mapped[str] = mapped_column(String(50), default='seen')
     text: Mapped[str] = mapped_column(Text)
     rewritten_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.current_timestamp())
+    # timezone=True → TIMESTAMPTZ in PostgreSQL; server_default evaluated per-row on DB side
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.current_timestamp()
+    )
 
     __table_args__ = (
         UniqueConstraint('source_channel_id', 'source_message_id', name='uq_source_msg'),

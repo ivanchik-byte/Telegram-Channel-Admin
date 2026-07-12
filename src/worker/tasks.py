@@ -1,84 +1,135 @@
 import asyncio
 import re
-import openai
-from openai import AsyncOpenAI
+import hashlib
+from datetime import timedelta
+
+from openai import AsyncOpenAI, APIStatusError, APIConnectionError
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ParseMode
+from html import escape
+
 from src.core.logger import logger
 from src.core.config import settings
 from src.core.prompts import SYSTEM_PROMPT_REWRITE
+from src.core.i18n import i18n
+from src.core.constants import TG_SAFE_MESSAGE_LIMIT
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
 from sqlalchemy import select
 from src.database.models import ProcessedPost
 
-_ai_client = None
-
-def get_ai_client() -> AsyncOpenAI:
-    global _ai_client
-    if _ai_client is None:
-        _ai_client = AsyncOpenAI(api_key=settings.AI_API_KEY, base_url=settings.AI_BASE_URL)
-    return _ai_client
 
 def contains_ad(text: str) -> bool:
     if not text or not settings.parsed_ad_keywords:
         return False
-    
+
     text_lower = text.lower()
     for kw in settings.parsed_ad_keywords:
-        # Support non-word chars in ads
-        pattern = rf"(?:^|(?<=\W)){re.escape(kw)}(?:$|(?=\W))"
-        if re.search(pattern, text_lower, flags=re.IGNORECASE):
+        # Substring match is intentional for Russian morphology:
+        # "реклама" matches "рекламы", "рекламе", "рекламой" etc.
+        if kw in text_lower:
             return True
     return False
 
-async def send_moderation_card(ctx, session, post_id: int, source_channel_id: int, text: str):
+
+async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str):
+    """
+    Отправляет карточку модерации в MODERATOR_CHAT_ID.
+    Статус поста уже выставлен в 'moderating' вызывающим кодом до вызова этой функции.
+    При сбое отправки — только логирует ошибку, НЕ меняет статус.
+    Пост остаётся в 'moderating' с сохранённым rewritten_text.
+    """
+    # escape user content before embedding into HTML message
+    display_text = escape(text[:TG_SAFE_MESSAGE_LIMIT])
+    text_to_send = f"{i18n.get('card_new_post', channel_id=source_channel_id)}\n\n{display_text}"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
+            InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
+        ],
+        [
+            InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}")
+        ]
+    ])
+
     try:
-        from aiogram import Bot
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        from aiogram.enums import ParseMode
-        
-        from src.core.i18n import i18n
-        display_text = text[:4000]
-        text_to_send = f"{i18n.get('card_new_post', channel_id=source_channel_id)}\n\n{display_text}"
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
-                InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
-            ],
-            [
-                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}")
-            ]
-        ])
-        
         bot = ctx['bot']
-        from aiogram.enums import ParseMode
         await bot.send_message(
             chat_id=settings.MODERATOR_CHAT_ID,
             text=text_to_send,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
-        
-        await PostRepository.update_status(session, post_id, 'moderating')
         logger.info(f"[Worker] Пост {post_id} отправлен на модерацию.")
     except Exception as e:
-        logger.error(f"[Worker] Ошибка отправки поста {post_id} на модерацию: {e}")
-        await PostRepository.update_status(session, post_id, 'failed')
+        # Статус не меняем: пост в 'moderating' с rewritten_text, можно восстановить.
+        logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
+
+
+async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> str | None:
+    """AI rewrite with exponential backoff. Returns rewritten text or None on failure."""
+    backoff_delays = [2, 4, 8, 16, 32]
+
+    for attempt, delay in enumerate(backoff_delays):
+        try:
+            response = await client.chat.completions.create(
+                model=settings.AI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_REWRITE},
+                    {"role": "user", "content": text}
+                ],
+                extra_body=settings.AI_EXTRA_BODY or {}
+            )
+            return response.choices[0].message.content.strip()
+
+        except APIStatusError as e:
+            if e.status_code == 429 or (500 <= e.status_code < 600):
+                if attempt < len(backoff_delays) - 1:
+                    logger.warning(f"[Worker] Пост {post_id}: Ошибка {e.status_code}. Повтор через {delay} сек...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (RateLimit/Server Error).")
+            else:
+                logger.error(f"[Worker] Пост {post_id}: Критическая ошибка API: {e.status_code} - {e.message}")
+            break
+        except APIConnectionError:
+            if attempt < len(backoff_delays) - 1:
+                logger.warning(f"[Worker] Пост {post_id}: Ошибка соединения. Повтор через {delay} сек...")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (Connection).")
+            break
+        except Exception as e:
+            logger.error(f"[Worker] Пост {post_id}: Неизвестная ошибка: {e}")
+            break
+
+    return None
+
 
 async def process_post_task(ctx, post_id: int):
     logger.info(f"[Worker] Получена задача на обработку поста с ID: {post_id}")
-    
+
+    # --- Шаг 1: Читаем данные, дедупликация, начальная фильтрация — закрываем сессию ---
+    # Сессия НЕ держится открытой во время AI-запроса (backoff до ~62 сек).
+    post_text: str | None = None
+    post_source_channel_id: int | None = None
+    is_duplicate_ready = False
+    duplicate_rewritten_text: str | None = None
+
     async with async_session_maker() as session:
-        # Fetch the entire post to check status
         stmt = select(ProcessedPost).where(ProcessedPost.id == post_id)
         result = await session.execute(stmt)
         post = result.scalars().first()
-        
+
         if not post or not post.text:
             logger.warning(f"[Worker] Пост {post_id} не найден или не содержит текста.")
             return
 
-        # Duplicate detection starts here by querying for older matching posts
+        post_text = post.text
+        post_source_channel_id = post.source_channel_id
+
+        # Дедупликация: ищем ранее добавленный пост с тем же хэшем
         duplicate_check_stmt = select(ProcessedPost).where(
             ProcessedPost.post_hash == post.post_hash,
             ProcessedPost.id < post.id
@@ -87,109 +138,94 @@ async def process_post_task(ctx, post_id: int):
 
         if is_duplicate:
             logger.info(f"[Worker] Пост {post_id} определен как дубликат.")
-            # Check original post
+
+            # Ищем оригинал с уже готовым rewritten_text
             orig_stmt = select(ProcessedPost).where(
-                ProcessedPost.post_hash == post.post_hash, 
+                ProcessedPost.post_hash == post.post_hash,
                 ProcessedPost.id != post.id,
-                ProcessedPost.rewritten_text.isnot(None)
+                ProcessedPost.rewritten_text.is_not(None)
             ).order_by(ProcessedPost.id.asc()).limit(1)
             orig_result = await session.execute(orig_stmt)
             orig_post = orig_result.scalars().first()
-            
+
             if not orig_post:
-                # Check if original is still processing
+                # Оригинал ещё обрабатывается — проверяем, существует ли он вообще
                 any_orig_stmt = select(ProcessedPost).where(
                     ProcessedPost.post_hash == post.post_hash,
                     ProcessedPost.id != post.id
                 ).limit(1)
                 any_result = await session.execute(any_orig_stmt)
-                if any_result.scalars().first():
-                    # Defer if processing
-                    logger.warning(f"[Worker] Оригинал для дубликата {post_id} еще в обработке. Откладываем (retry).")
-                    raise RuntimeError("Original post is still processing")
+                orig_any = any_result.scalars().first()
+                if orig_any:
+                    if orig_any.status in ('failed', 'filtered_ad', 'rejected'):
+                        logger.info(f"[Worker] Оригинал {post_id} забракован (статус {orig_any.status}). Дубликат отменён.")
+                        await PostRepository.update_status(session, post_id, orig_any.status)
+                        return
+                        
+                    logger.warning(
+                        f"[Worker] Оригинал для дубликата {post_id} еще в обработке. "
+                        f"Откладываем на 30 сек."
+                    )
+                    # Re-enqueue with delay instead of raising RuntimeError (which caused blind retries)
+                    await ctx['redis'].enqueue_job(
+                        'process_post_task', post_id, _defer_by=timedelta(seconds=30)
+                    )
+                    return
                 else:
                     logger.error(f"[Worker] Оригинал для дубликата {post_id} не найден. Отмена.")
                     await PostRepository.update_status(session, post_id, 'failed')
                     return
-            
-            # Copy rewritten text and mark as duplicate moderating
+
+            # Копируем rewritten_text и сразу переводим в 'moderating'
             await PostRepository.update_post_ready_for_moderation(session, post_id, orig_post.rewritten_text)
-            logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст и передан на модерацию. Источник: {orig_post.id}")
-            await send_moderation_card(ctx, session, post_id, post.source_channel_id, orig_post.rewritten_text)
-            return
+            logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст из поста {orig_post.id}.")
+            duplicate_rewritten_text = orig_post.rewritten_text
+            is_duplicate_ready = True
 
-        text = post.text
-
-        # 1. Ad filtering
-        if contains_ad(text):
-            logger.info(f"[Worker] Пост {post_id} отфильтрован как реклама.")
-            await PostRepository.update_status(session, post_id, 'filtered_ad')
-            return
-            
-        # Update status to ai_processing
-        await PostRepository.update_status(session, post_id, 'ai_processing')
-        logger.info(f"[Worker] Пост {post_id} отправлен на AI-рерайт.")
-
-        # 2. AI Rewrite with Exponential Backoff
-        max_retries = 5
-        backoff_delays = [2, 4, 8, 16, 32]
-        
-        rewritten_text = None
-        success = False
-        
-        client = get_ai_client()
-        
-        for attempt in range(max_retries):
-            try:
-                # Prepare arguments
-                kwargs = {
-                    "model": settings.AI_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT_REWRITE},
-                        {"role": "user", "content": text}
-                    ]
-                }
-                
-                response = await client.chat.completions.create(
-                    **kwargs, 
-                    extra_body=settings.AI_EXTRA_BODY or {}
-                )
-                rewritten_text = response.choices[0].message.content.strip()
-                success = True
-                break
-                
-            except openai.APIStatusError as e:
-                # Retry on 429 and 5xx errors
-                if e.status_code == 429 or (500 <= e.status_code < 600):
-                    if attempt < len(backoff_delays):
-                        delay = backoff_delays[attempt]
-                        logger.warning(f"[Worker] Пост {post_id}: Ошибка {e.status_code}. Повтор через {delay} сек...")
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (RateLimit/Server Error).")
-                        break
-                else:
-                    logger.error(f"[Worker] Пост {post_id}: Критическая ошибка API: {e.status_code} - {e.message}")
-                    break
-            except openai.APIConnectionError as e:
-                if attempt < len(backoff_delays):
-                    delay = backoff_delays[attempt]
-                    logger.warning(f"[Worker] Пост {post_id}: Ошибка соединения (APIConnectionError). Повтор через {delay} сек...")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (Connection).")
-                    break
-            except Exception as e:
-                logger.error(f"[Worker] Пост {post_id}: Неизвестная ошибка: {e}")
-                break
-                
-        # 3. Finalize
-        if success and rewritten_text:
-            await PostRepository.update_post_ready_for_moderation(session, post_id, rewritten_text)
-            logger.info(f"[Worker] Пост {post_id} успешно обработан ИИ и готов к модерации.")
-            
-            # Send moderation card
-            await send_moderation_card(ctx, session, post_id, post.source_channel_id, rewritten_text)
         else:
-            await PostRepository.update_status(session, post_id, 'failed')
+            # Фильтрация рекламы
+            if contains_ad(post_text):
+                logger.info(f"[Worker] Пост {post_id} отфильтрован как реклама.")
+                await PostRepository.update_status(
+                    session, post_id, 'filtered_ad', required_current_status='queued'
+                )
+                return
+
+            success = await PostRepository.update_status(
+                session, post_id, 'ai_processing', required_current_status='queued'
+            )
+            if not success:
+                logger.warning(f"[Worker] Пост {post_id} изменил статус. Отмена.")
+                return
+                
+            logger.info(f"[Worker] Пост {post_id} отправлен на AI-рерайт.")
+
+    # Сессия закрыта — теперь безопасно делать долгие сетевые вызовы
+
+    if is_duplicate_ready:
+        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text)
+        return
+
+    # --- Шаг 2: AI-рерайт — БД-сессия закрыта ---
+    client: AsyncOpenAI = ctx['ai_client']
+    rewritten_text = await _call_ai_with_retry(client, post_text, post_id)
+
+    # --- Шаг 3: Финализация — новая сессия ---
+    async with async_session_maker() as session:
+        if rewritten_text:
+            success = await PostRepository.update_post_ready_for_moderation(
+                session, post_id, rewritten_text, required_current_status='ai_processing'
+            )
+            if success:
+                logger.info(f"[Worker] Пост {post_id} успешно обработан ИИ и готов к модерации.")
+            else:
+                logger.warning(f"[Worker] Пост {post_id} изменил статус во время генерации текста. Результат отброшен.")
+                rewritten_text = None
+        else:
+            await PostRepository.update_status(
+                session, post_id, 'failed', required_current_status='ai_processing'
+            )
             logger.error(f"[Worker] Пост {post_id} переведен в статус failed.")
+
+    if rewritten_text:
+        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text)
