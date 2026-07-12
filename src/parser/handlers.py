@@ -6,10 +6,10 @@ from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
 
 def calculate_md5(text: str, channel_id: int, message_id: int) -> str:
-    # Normalize text: strip and lower, remove extra whitespaces
+    # Normalize text
     normalized = re.sub(r'\s+', ' ', text.strip().lower())
     if not normalized:
-        # User requested: "{source_channel_id}_{source_message_id}" MD5 if text is empty
+        # Fallback hash for empty text
         hash_input = f"{channel_id}_{message_id}"
     else:
         hash_input = normalized
@@ -55,10 +55,10 @@ async def new_message_handler(event: events.NewMessage.Event):
         else:
             logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}.")
         
-        # Update status to queued and strictly commit before enqueueing to Arq
+        # Mark queued before Arq
         await PostRepository.update_status(session, post_id, 'queued')
         
-        # Enqueue to Arq using client's attached redis pool AFTER all DB commits
+        # Enqueue to Arq
         pool = event.client.redis_pool
         try:
             await pool.enqueue_job('process_post_task', post_id)

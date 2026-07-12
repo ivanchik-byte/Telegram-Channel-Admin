@@ -15,5 +15,5 @@ async_session_maker = async_sessionmaker(
 async def init_db():
     from src.database.models import Base
     async with engine.begin() as conn:
-        # We will create tables if they don't exist (for fresh starts)
+        # Create tables if missing
         await conn.run_sync(Base.metadata.create_all)

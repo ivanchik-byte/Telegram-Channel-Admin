@@ -22,5 +22,5 @@ class WorkerSettings:
     functions = [process_post_task]
     on_startup = startup
     on_shutdown = shutdown
-    # Parse DSN (like redis://redis:6379/0) to RedisSettings
+    # Parse DSN
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
