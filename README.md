@@ -1,3 +1,5 @@
+*English version coming soon*
+
 # Telegram Channel Admin (AI Moderator)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org)
@@ -21,28 +23,27 @@
 
 ```mermaid
 flowchart TD
-    subgraph Telegram_Network [Telegram]
-        Donor[Каналы-доноры]
-        Target[Целевой канал]
-        ModChat[Чат модераторов]
+    subgraph Telegram ["Telegram"]
+        Donor["Каналы-доноры"]
+        Target["Целевой канал"]
+        ModChat["Чат модераторов"]
     end
 
-    Parser[Parser: Telethon]
-    DB[(PostgreSQL)]
-    Queue[Queue: Redis + Arq]
-    Worker[Worker: Arq + OpenAI]
-    Bot[Bot: aiogram]
+    Parser["Parser (Telethon)"]
+    DB[("PostgreSQL")]
+    Queue["Очередь (Redis + Arq)"]
+    Worker["Worker (Arq + OpenAI)"]
+    Bot["Bot (aiogram)"]
 
-    Donor -->|Сбор постов| Parser
-    Parser -->|Атомарный INSERT| DB
-    Parser -->|Добавление задачи| Queue
-    Queue -->|Получение задачи| Worker
-    Worker -->|Фильтрация и LLM-рерайт| Worker
-    Worker -->|Сохранение версии| DB
-    Worker -->|Уведомление| Bot
-    Bot -->|Карточка на одобрение| ModChat
-    ModChat -->|Кнопка публикации| Bot
-    Bot -->|Публикация| Target
+    Donor --> Parser
+    Parser --> DB
+    Parser --> Queue
+    Queue --> Worker
+    Worker --> DB
+    Worker --> Bot
+    Bot --> ModChat
+    ModChat --> Bot
+    Bot --> Target
 ```
 
 ### Компоненты:
