@@ -23,36 +23,16 @@
 
 ```mermaid
 flowchart TD
-    subgraph Telegram ["Telegram Platform"]
-        Donors["Donor Channels (Source)"]
-        TargetChannel["Target Channel (Publication)"]
-        ModGroup["Moderator Chat (Review UI)"]
-    end
-
-    subgraph Services ["Application Services"]
-        Parser["Parser (Telethon Userbot)"]
-        Queue["Task Queue (Redis + Arq)"]
-        Worker["Worker (AsyncOpenAI)"]
-        Bot["Bot (aiogram)"]
-    end
-
-    subgraph Storage ["Storage Layer"]
-        DB[("PostgreSQL Database")]
-        RedisDB[("Redis Cache & Queue")]
-    end
-
-    %% Flow
-    Donors -->|1. New Posts| Parser
-    Parser -->|2. Save Raw Post| DB
-    Parser -->|3. Push Job| Queue
-    Queue -.->|Manage Queue| RedisDB
-    Queue -->|4. Pull Job| Worker
-    Worker -->|5. Save Rewritten Draft| DB
-    Worker -->|6. Notify Bot| Bot
-    Bot -->|7. Send Review Card| ModGroup
-    ModGroup -->|8. Approve / Reject| Bot
-    Bot -->|9. Update Post Status| DB
-    Bot -->|10. Publish Post| TargetChannel
+    Donors["Каналы-доноры (Telegram)"] -->|Сбор постов| Parser["Парсер (Telethon)"]
+    Parser -->|Сохранение постов| DB["База данных (PostgreSQL)"]
+    Parser -->|Добавление задачи| Queue["Очередь задач (Redis + Arq)"]
+    Queue -->|Получение задачи| Worker["Воркер (OpenAI API)"]
+    Worker -->|Сохранение рерайта| DB
+    Worker -->|Сигнал о готовности| Bot["Модераторский бот (aiogram)"]
+    Bot -->|Карточка на ревью| ModGroup["Чат модераторов"]
+    ModGroup -->|Действие модератора| Bot
+    Bot -->|Обновление статуса| DB
+    Bot -->|Публикация поста| TargetChannel["Целевой канал"]
 ```
 
 ### Компоненты:
@@ -69,62 +49,92 @@ flowchart TD
 
 ### Шаг 1. Подготовка API-ключей
 
-1. Получите `API_ID` и `API_HASH` на [my.telegram.org](https://my.telegram.org) в разделе *API development tools*.
-2. Создайте бота через @BotFather и сохраните его токен (`TELEGRAM_BOT_TOKEN`).
-3. Получите ключ к API OpenAI (`AI_API_KEY`).
+1. **Telegram API (Userbot)**:
+   - Зайдите на [my.telegram.org](https://my.telegram.org) и авторизуйтесь под своим номером телефона.
+   - Перейдите в раздел **API development tools**.
+   - Создайте новое приложение (заполните любое имя и короткое имя).
+   - Скопируйте полученные значения `API_ID` (число) и `API_HASH` (строка). Это необходимо для авторизации парсера (Telethon).
+2. **Telegram Bot Token (Модератор)**:
+   - Откройте чат с [@BotFather](https://t.me/BotFather) в Telegram.
+   - Отправьте команду `/newbot`, задайте имя и уникальный юзернейм для вашего бота.
+   - Скопируйте выданный токен (`TELEGRAM_BOT_TOKEN`).
+3. **OpenAI API Key**:
+   - Зайдите в личный кабинет OpenAI (или используйте адрес вашего API-провайдера/прокси).
+   - Создайте новый API-ключ (`AI_API_KEY`) с доступом к модели `gpt-4o-mini` (или другой на ваш выбор).
 
 ### Шаг 2. Настройка окружения
 
-Скопируйте файл конфигурации:
-```bash
-cp .env.example .env
-```
-Заполните переменные в созданном файле `.env`:
+1. Скопируйте шаблон файла конфигурации в рабочий файл `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Откройте файл `.env` в текстовом редакторе и настройте параметры.
+   > **Важно:** Убедитесь, что параметры подключения в `DATABASE_URL` соответствуют значениям `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB`.
 
 | Переменная | Описание | Пример значения |
 |---|---|---|
 | `POSTGRES_DB` | Имя базы данных PostgreSQL | `tg_admin` |
 | `POSTGRES_USER` | Пользователь PostgreSQL | `postgres` |
 | `POSTGRES_PASSWORD` | Пароль PostgreSQL | `secure_password` |
-| `DATABASE_URL` | Строка подключения к БД | `postgresql+asyncpg://postgres:pass@db:5432/tg_admin` |
+| `DATABASE_URL` | Строка подключения к БД | `postgresql+asyncpg://postgres:secure_password@db:5432/tg_admin` |
 | `REDIS_URL` | Строка подключения к Redis | `redis://redis:6379/0` |
 | `TELEGRAM_BOT_TOKEN` | Токен модераторского бота | `123456:ABC-DEF...` |
-| `ADMIN_IDS` | ID администраторов (через запятую) | `123456789,987654321` |
-| `TARGET_CHANNEL_ID` | ID канала для публикации | `-1001234567890` |
-| `MODERATOR_CHAT_ID` | ID чата модерации | `-1001987654321` |
-| `API_ID` | Telegram API ID | `1234567` |
-| `API_HASH` | Telegram API Hash | `abcdef0123456789abcdef0123456789` |
-| `CHANNELS_TO_TRACK` | Юзернеймы или ID доноров | `channel1, @channel2, -1001111111` |
-| `AI_API_KEY` | Ключ OpenAI API / Proxy | `sk-proj-...` |
-| `AI_BASE_URL` | Базовый URL API (для прокси/локальных моделей) | `https://api.openai.com/v1` |
-| `AI_MODEL` | Используемая модель ИИ | `gpt-4o-mini` |
-| `AD_KEYWORDS` | Стоп-слова для рекламы (через запятую) | `реклама, промокод, подписывайтесь` |
-| `OPENAI_EXTRA_BODY` | Опциональные параметры JSON для API | `{"temperature": 0.7}` |
+| `ADMIN_IDS` | ID аккаунтов модераторов через запятую (для проверки прав) | `123456789,987654321` |
+| `TARGET_CHANNEL_ID` | ID канала, куда публикуются одобренные посты | `-1001234567890` |
+| `MODERATOR_CHAT_ID` | ID группы/чата, куда бот присылает карточки на ревью | `-1001987654321` |
+| `API_ID` | Telegram API ID (полученный на my.telegram.org) | `1234567` |
+| `API_HASH` | Telegram API Hash (полученный на my.telegram.org) | `abcdef0123456789abcdef0123456789` |
+| `CHANNELS_TO_TRACK` | Юзернеймы или ID каналов-доноров для парсинга (через запятую) | `channel1, @channel2, -1001111111` |
+| `AI_API_KEY` | Ключ доступа к OpenAI API | `sk-proj-...` |
+| `AI_BASE_URL` | Базовый URL API (оставьте пустым для OpenAI или укажите прокси) | `https://api.openai.com/v1` |
+| `AI_MODEL` | Используемая модель ИИ для рерайта | `gpt-4o-mini` |
+| `AD_KEYWORDS` | Стоп-слова для фильтрации рекламы (регистронезависимо, через запятую) | `реклама, промокод, подписывайтесь` |
+| `OPENAI_EXTRA_BODY` | Опциональные параметры JSON для тонкой настройки запросов к API | `{"temperature": 0.7}` |
 
 ### Шаг 3. Авторизация сессии парсера
 
-Парсер работает через Telethon и требует авторизации по номеру телефона:
+Парсер использует клиентскую сессию Telegram (Telethon), которую необходимо авторизовать один раз перед запуском основного приложения:
 
-1. Запустите базы данных:
+1. Запустите СУБД и Redis в фоновом режиме:
    ```bash
    docker compose up -d redis db
    ```
-2. Запустите скрипт интерактивной авторизации:
+2. Запустите скрипт интерактивного входа:
    ```bash
    docker compose run --rm parser python src/login.py
    ```
-3. Введите номер телефона и код подтверждения из Telegram. В папке `data/` будет сохранен файл сессии `anon.session`.
+3. Скрипт попросит ввести номер телефона (в международном формате, например, `+79991234567`) и код подтверждения, который придет в ваше приложение Telegram.
+4. После успешного входа в примонтированной папке `data/` будет создан файл авторизованной сессии `anon.session`. Данный файл позволяет боту работать без постоянного ввода СМС/кодов.
 
-### Шаг 4. Запуск приложения
+### Шаг 4. Полный запуск проекта
 
-Запустите все сервисы в фоновом режиме. Миграции базы данных применятся автоматически через контейнер `migrator`:
+Теперь можно запустить все сервисы. Контейнер `migrator` автоматически применит миграции базы данных Alembic и завершит работу, а остальные сервисы останутся работать в фоне.
 
 ```bash
 docker compose up -d --build
 ```
 
-- Проверка статуса контейнеров: `docker compose ps`
-- Просмотр логов: `docker compose logs -f`
+#### Полезные команды при работе:
+* **Проверить статус контейнеров**:
+  ```bash
+  docker compose ps
+  ```
+* **Просмотреть логи в реальном времени**:
+  ```bash
+  docker compose logs -f
+  ```
+* **Логи конкретного сервиса** (например, воркера):
+  ```bash
+  docker compose logs -f worker
+  ```
+* **Остановить приложение**:
+  ```bash
+  docker compose down
+  ```
+* **Остановить с удалением сохраненных данных (полный сброс)**:
+  ```bash
+  docker compose down -v
+  ```
 
 ---
 
