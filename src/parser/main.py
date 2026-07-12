@@ -8,7 +8,7 @@ from src.parser.handlers import new_message_handler
 from arq import create_pool
 from arq.connections import RedisSettings
 
-SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'anon')
+SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'anon')
 
 async def main():
     if not os.path.exists(f"{SESSION_FILE}.session"):
