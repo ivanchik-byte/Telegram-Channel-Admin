@@ -24,7 +24,7 @@ def contains_ad(text: str) -> bool:
     
     text_lower = text.lower()
     for kw in settings.parsed_ad_keywords:
-        # Use look-behind and look-ahead for non-word chars instead of \b to support #, : etc.
+        # Support non-word chars in ads
         pattern = rf"(?:^|(?<=\W)){re.escape(kw)}(?:$|(?=\W))"
         if re.search(pattern, text_lower, flags=re.IGNORECASE):
             return True

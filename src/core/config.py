@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     API_ID: int
     API_HASH: str
     
-    # Can be a comma-separated string of IDs or usernames
+    # Commas-separated IDs/usernames
     CHANNELS_TO_TRACK: str
     
     # Bot Settings

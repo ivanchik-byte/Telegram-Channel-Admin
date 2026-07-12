@@ -2,7 +2,7 @@ import os
 from telethon.sync import TelegramClient
 from dotenv import load_dotenv
 
-# Load env directly to bypass pydantic validation for missing DB/Redis URLs during login
+# Bypass validation for login
 load_dotenv()
 
 API_ID = int(os.environ.get("API_ID", 0))

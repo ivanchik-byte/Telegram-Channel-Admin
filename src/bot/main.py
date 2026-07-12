@@ -8,8 +8,7 @@ from src.bot.handlers import router
 async def main():
     logger.info("Starting Telegram Moderator Bot...")
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    # Since we don't rely heavily on FSM states persisting across restarts for simple edit commands, 
-    # MemoryStorage is sufficient, or we can just omit it for simple commands.
+    # Use MemoryStorage for basic FSM
     dp = Dispatcher(storage=MemoryStorage())
     
     dp.include_router(router)
