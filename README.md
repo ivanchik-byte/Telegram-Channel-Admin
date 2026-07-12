@@ -23,27 +23,36 @@
 
 ```mermaid
 flowchart TD
-    subgraph Telegram ["Telegram"]
-        Donor["Каналы-доноры"]
-        Target["Целевой канал"]
-        ModChat["Чат модераторов"]
+    subgraph Telegram ["Telegram Platform"]
+        Donors["Donor Channels (Source)"]
+        TargetChannel["Target Channel (Publication)"]
+        ModGroup["Moderator Chat (Review UI)"]
     end
 
-    Parser["Parser (Telethon)"]
-    DB[("PostgreSQL")]
-    Queue["Очередь (Redis + Arq)"]
-    Worker["Worker (Arq + OpenAI)"]
-    Bot["Bot (aiogram)"]
+    subgraph Services ["Application Services"]
+        Parser["Parser (Telethon Userbot)"]
+        Queue["Task Queue (Redis + Arq)"]
+        Worker["Worker (AsyncOpenAI)"]
+        Bot["Bot (aiogram)"]
+    end
 
-    Donor --> Parser
-    Parser --> DB
-    Parser --> Queue
-    Queue --> Worker
-    Worker --> DB
-    Worker --> Bot
-    Bot --> ModChat
-    ModChat --> Bot
-    Bot --> Target
+    subgraph Storage ["Storage Layer"]
+        DB[("PostgreSQL Database")]
+        RedisDB[("Redis Cache & Queue")]
+    end
+
+    %% Flow
+    Donors -->|1. New Posts| Parser
+    Parser -->|2. Save Raw Post| DB
+    Parser -->|3. Push Job| Queue
+    Queue -.->|Manage Queue| RedisDB
+    Queue -->|4. Pull Job| Worker
+    Worker -->|5. Save Rewritten Draft| DB
+    Worker -->|6. Notify Bot| Bot
+    Bot -->|7. Send Review Card| ModGroup
+    ModGroup -->|8. Approve / Reject| Bot
+    Bot -->|9. Update Post Status| DB
+    Bot -->|10. Publish Post| TargetChannel
 ```
 
 ### Компоненты:
