@@ -1,15 +1,17 @@
 import asyncio
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
 from src.core.config import settings
 from src.core.logger import logger
 from src.bot.handlers import router
-
 async def main():
     logger.info("Starting Telegram Moderator Bot...")
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-    # Use MemoryStorage for basic FSM
-    dp = Dispatcher(storage=MemoryStorage())
+
+    if not settings.ADMIN_IDS:
+        logger.error("ADMIN_IDS is empty. Refusing to start.")
+        return
+
+    dp = Dispatcher()
     
     dp.include_router(router)
     

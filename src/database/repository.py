@@ -1,4 +1,4 @@
-from sqlalchemy import select, or_
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import ProcessedPost
@@ -36,7 +36,6 @@ class PostRepository:
 
     @staticmethod
     async def update_status(session: AsyncSession, post_id: int, new_status: str):
-        from sqlalchemy import update
         stmt = update(ProcessedPost).where(ProcessedPost.id == post_id).values(status=new_status)
         await session.execute(stmt)
         await session.commit()
@@ -48,11 +47,10 @@ class PostRepository:
         return result.scalars().first()
 
     @staticmethod
-    async def update_post_success(session: AsyncSession, post_id: int, rewritten_text: str):
-        from sqlalchemy import update
+    async def update_post_ready_for_moderation(session: AsyncSession, post_id: int, rewritten_text: str):
         stmt = update(ProcessedPost).where(ProcessedPost.id == post_id).values(
             rewritten_text=rewritten_text, 
-            status='processed'
+            status='moderating'
         )
         await session.execute(stmt)
         await session.commit()
@@ -65,7 +63,6 @@ class PostRepository:
 
     @staticmethod
     async def atomic_status_update(session: AsyncSession, post_id: int, required_current_status: str, new_status: str):
-        from sqlalchemy import update
         stmt = update(ProcessedPost).where(
             ProcessedPost.id == post_id,
             ProcessedPost.status == required_current_status
@@ -77,7 +74,6 @@ class PostRepository:
 
     @staticmethod
     async def atomic_edit_text(session: AsyncSession, post_id: int, required_current_status: str, new_text: str):
-        from sqlalchemy import update
         stmt = update(ProcessedPost).where(
             ProcessedPost.id == post_id,
             ProcessedPost.status == required_current_status

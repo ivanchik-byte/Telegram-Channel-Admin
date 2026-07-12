@@ -51,10 +51,12 @@ async def send_moderation_card(ctx, session, post_id: int, source_channel_id: in
         ])
         
         bot = ctx['bot']
+        from aiogram.enums import ParseMode
         await bot.send_message(
             chat_id=settings.MODERATOR_CHAT_ID,
             text=text_to_send,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
         
         await PostRepository.update_status(session, post_id, 'moderating')
@@ -76,13 +78,21 @@ async def process_post_task(ctx, post_id: int):
             logger.warning(f"[Worker] Пост {post_id} не найден или не содержит текста.")
             return
 
-        if post.status == 'duplicate_content':
+        # Duplicate detection starts here by querying for older matching posts
+        duplicate_check_stmt = select(ProcessedPost).where(
+            ProcessedPost.post_hash == post.post_hash,
+            ProcessedPost.id < post.id
+        ).limit(1)
+        is_duplicate = (await session.execute(duplicate_check_stmt)).scalar() is not None
+
+        if is_duplicate:
+            logger.info(f"[Worker] Пост {post_id} определен как дубликат.")
             # Check original post
             orig_stmt = select(ProcessedPost).where(
                 ProcessedPost.post_hash == post.post_hash, 
                 ProcessedPost.id != post.id,
                 ProcessedPost.rewritten_text.isnot(None)
-            ).order_by(ProcessedPost.id.desc()).limit(1)
+            ).order_by(ProcessedPost.id.asc()).limit(1)
             orig_result = await session.execute(orig_stmt)
             orig_post = orig_result.scalars().first()
             
@@ -102,9 +112,9 @@ async def process_post_task(ctx, post_id: int):
                     await PostRepository.update_status(session, post_id, 'failed')
                     return
             
-            # Copy rewritten text
-            await PostRepository.update_post_success(session, post_id, orig_post.rewritten_text)
-            logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст и передан на модерацию.")
+            # Copy rewritten text and mark as duplicate moderating
+            await PostRepository.update_post_ready_for_moderation(session, post_id, orig_post.rewritten_text)
+            logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст и передан на модерацию. Источник: {orig_post.id}")
             await send_moderation_card(ctx, session, post_id, post.source_channel_id, orig_post.rewritten_text)
             return
 
@@ -175,8 +185,8 @@ async def process_post_task(ctx, post_id: int):
                 
         # 3. Finalize
         if success and rewritten_text:
-            await PostRepository.update_post_success(session, post_id, rewritten_text)
-            logger.info(f"[Worker] Пост {post_id} успешно обработан и сохранен.")
+            await PostRepository.update_post_ready_for_moderation(session, post_id, rewritten_text)
+            logger.info(f"[Worker] Пост {post_id} успешно обработан ИИ и готов к модерации.")
             
             # Send moderation card
             await send_moderation_card(ctx, session, post_id, post.source_channel_id, rewritten_text)
