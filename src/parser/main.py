@@ -29,7 +29,7 @@ async def main():
     # Add handler for specific channels
     client.add_event_handler(
         new_message_handler, 
-        events.NewMessage(chats=channels) if channels else events.NewMessage()
+        events.NewMessage(chats=channels)
     )
 
     logger.info("Starting Telegram parser client...")

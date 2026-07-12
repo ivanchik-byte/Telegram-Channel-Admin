@@ -29,14 +29,7 @@ async def new_message_handler(event: events.NewMessage.Event):
 
     async with async_session_maker() as session:
 
-        from sqlalchemy import select
-        from src.database.models import ProcessedPost
-        
-        dup_stmt = select(ProcessedPost.id).where(ProcessedPost.post_hash == post_hash).limit(1)
-        dup_result = await session.execute(dup_stmt)
-        is_duplicate = dup_result.scalar() is not None
-        
-        status = 'duplicate_content' if is_duplicate else 'seen'
+        # Assume seen initially, handled blindly via insert
 
         post_id = await PostRepository.process_new_post(
             session=session,
@@ -44,19 +37,13 @@ async def new_message_handler(event: events.NewMessage.Event):
             message_id=message_id,
             post_hash=post_hash,
             text=text,
-            status=status
+            status='queued'
         )
 
         if not post_id:
             return
         
-        if is_duplicate:
-            logger.info(f"[Parser] Пост {channel_id}:{message_id} - дубликат контента (отправлен в очередь).")
-        else:
-            logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}.")
-        
-        # Mark queued before Arq
-        await PostRepository.update_status(session, post_id, 'queued')
+        logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}. Отправлен в очередь.")
         
         # Enqueue to Arq
         pool = event.client.redis_pool

@@ -5,11 +5,15 @@ from src.core.logger import logger
 from src.core.config import settings
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
+from src.core.i18n import i18n
+from aiogram.filters import CommandObject
 
 class IsModeratorFilter(BaseFilter):
     async def __call__(self, event) -> bool:
         from aiogram.types import Message, CallbackQuery
         if isinstance(event, Message):
+            if not event.from_user:
+                return False
             chat_id = event.chat.id
             user_id = event.from_user.id
         elif isinstance(event, CallbackQuery):
@@ -23,15 +27,12 @@ class IsModeratorFilter(BaseFilter):
         
         if is_right_chat and not is_admin:
             if isinstance(event, CallbackQuery):
-                from src.core.i18n import i18n
                 await event.answer(i18n.get('msg_access_denied'), show_alert=True)
             return False
             
         return is_admin and is_right_chat
 
 router = Router()
-
-from src.core.i18n import i18n
 
 @router.callback_query(F.data.startswith("publish_"), IsModeratorFilter())
 async def process_publish(callback: CallbackQuery, bot: Bot):
@@ -78,7 +79,7 @@ async def process_reject(callback: CallbackQuery):
             await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
             return
             
-        display_text = post.rewritten_text[:4000] if post.rewritten_text else ""
+        display_text = (post.rewritten_text or "")[:4096]
         new_text = f"{i18n.get('msg_rejected')}\n\n{display_text}"
         await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
         await callback.answer(i18n.get('msg_rejected_alert'))
@@ -99,8 +100,6 @@ async def process_edit(callback: CallbackQuery):
         await callback.message.answer(post.rewritten_text)
         await callback.answer()
 
-from aiogram.filters import CommandObject
-
 @router.message(Command("edit"), IsModeratorFilter())
 async def process_edit_command(message: Message, command: CommandObject):
     if not command.args:
@@ -108,11 +107,16 @@ async def process_edit_command(message: Message, command: CommandObject):
         return
         
     parts = command.args.split(maxsplit=1)
-    if len(parts) < 2 or not parts[0].isdigit():
+    if len(parts) < 2:
+        await message.reply(i18n.get('msg_edit_wrong_format'))
+        return
+        
+    try:
+        post_id = int(parts[0])
+    except ValueError:
         await message.reply(i18n.get('msg_edit_id_not_number'))
         return
         
-    post_id = int(parts[0])
     new_text = parts[1].strip()
     
     async with async_session_maker() as session:
