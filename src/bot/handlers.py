@@ -487,4 +487,8 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
         else:
             await message.answer_document(document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
 
+        # Send source link as next message if available
+        if post.source_link:
+            await message.answer(f"Источник: {post.source_link}")
+
         await message.reply("Медиафайл успешно заменен! Новая карточка отправлена.")
