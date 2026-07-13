@@ -17,6 +17,7 @@ from src.core.config import settings
 from src.core.constants import TG_SAFE_MESSAGE_LIMIT, TG_MESSAGE_LIMIT
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
+from src.database.models import ProcessedPost
 from src.core.i18n import i18n
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
