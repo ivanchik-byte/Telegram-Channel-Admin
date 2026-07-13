@@ -95,6 +95,18 @@ class PostRepository:
         return post
 
     @staticmethod
+    async def atomic_update_media(session: AsyncSession, post_id: int, required_current_status: str, media_path: str | None, media_type: str | None):
+        """UPDATE WHERE status = required → new media_path and media_type. Возвращает пост или None."""
+        stmt = update(ProcessedPost).where(
+            ProcessedPost.id == post_id,
+            ProcessedPost.status == required_current_status
+        ).values(media_path=media_path, media_type=media_type).returning(ProcessedPost)
+        result = await session.execute(stmt)
+        post = result.scalars().first()
+        await session.commit()
+        return post
+
+    @staticmethod
     async def get_queue_counts(session: AsyncSession):
         """Returns tuple: (moderating_count, queued_count)"""
         from sqlalchemy import func

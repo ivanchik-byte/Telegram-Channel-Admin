@@ -9,6 +9,8 @@ from src.core.constants import TG_SAFE_MESSAGE_LIMIT, TG_MESSAGE_LIMIT
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
 from src.core.i18n import i18n
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
 
 
 class IsModeratorFilter(BaseFilter):
@@ -186,7 +188,8 @@ async def process_edit_command(message: Message, command: CommandObject):
                 InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
             ],
             [
-                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}")
+                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
+                InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
             ]
         ])
 
@@ -363,3 +366,125 @@ async def cmd_clear(message: Message):
         await session.execute(stmt)
         await session.commit()
     await message.reply("Очередь и корзина полностью очищены.")
+
+
+class MediaReplacement(StatesGroup):
+    waiting_for_media = State()
+
+
+@router.callback_query(F.data.startswith("change_media_"), IsModeratorFilter())
+async def process_change_media(callback: CallbackQuery, state: FSMContext):
+    post_id = _parse_post_id(callback.data)
+    if post_id is None:
+        await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+        return
+
+    async with async_session_maker() as session:
+        post = await PostRepository.get_post_by_id(session, post_id)
+        if not post or post.status != 'moderating':
+            await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+            return
+
+    await state.set_state(MediaReplacement.waiting_for_media)
+    await state.update_data(post_id=post_id)
+    await callback.message.reply(
+        f"Отправьте новое фото, видео или документ для поста <b>#{post_id}</b>. Для отмены отправьте /cancel.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(MediaReplacement.waiting_for_media, IsModeratorFilter())
+async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    post_id = data.get("post_id")
+    if not post_id:
+        await state.clear()
+        return
+
+    media_type = None
+    file_id = None
+
+    if message.photo:
+        media_type = 'photo'
+        file_id = message.photo[-1].file_id
+    elif message.video:
+        media_type = 'video'
+        file_id = message.video.file_id
+    elif message.document:
+        media_type = 'document'
+        file_id = message.document.file_id
+    else:
+        if message.text and message.text.strip() == "/cancel":
+            await state.clear()
+            await message.reply("Замена медиа отменена.")
+            return
+        await message.reply("Пожалуйста, отправьте фото, видео или документ. Для отмены отправьте /cancel.")
+        return
+
+    await state.clear()
+
+    import os
+    os.makedirs('data/media', exist_ok=True)
+
+    try:
+        file_info = await bot.get_file(file_id)
+        file_ext = os.path.splitext(file_info.file_path)[1]
+        new_filename = f"media_{post_id}_{int(datetime.now(timezone.utc).timestamp())}{file_ext}"
+        new_path = os.path.join('data/media', new_filename)
+
+        logger.info(f"[Bot] Скачивание нового медиа для поста {post_id}: {new_path}...")
+        await bot.download_file(file_info.file_path, new_path)
+    except Exception as e:
+        logger.error(f"[Bot] Ошибка при скачивании нового медиа: {e}")
+        await message.reply("Не удалось скачать файл. Попробуйте ещё раз.")
+        return
+
+    async with async_session_maker() as session:
+        post_before = await PostRepository.get_post_by_id(session, post_id)
+        if not post_before or post_before.status != 'moderating':
+            if os.path.exists(new_path):
+                os.remove(new_path)
+            await message.reply("Срок действия этого поста истек или он уже обработан.")
+            return
+
+        old_path = post_before.media_path
+
+        post = await PostRepository.atomic_update_media(session, post_id, 'moderating', new_path, media_type)
+        if not post:
+            if os.path.exists(new_path):
+                os.remove(new_path)
+            await message.reply("Срок действия этого поста истек или он уже обработан.")
+            return
+
+        # Delete old file
+        if old_path and os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+                logger.info(f"[Bot] Старый файл {old_path} удален при замене медиа.")
+            except Exception as e:
+                logger.error(f"[Bot] Не удалось удалить старый файл {old_path}: {e}")
+
+        display_text = escape(post.rewritten_text[:TG_SAFE_MESSAGE_LIMIT])
+        text_to_send = f"{i18n.get('card_edited_post', channel_id=post.source_channel_id)}\n\n{display_text}"
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
+                InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
+            ],
+            [
+                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
+                InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
+            ]
+        ])
+
+        media_file = FSInputFile(new_path)
+        if media_type == 'photo':
+            await message.answer_photo(photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+        elif media_type == 'video':
+            await message.answer_video(video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            await message.answer_document(document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+
+        await message.reply("Медиафайл успешно заменен! Новая карточка отправлена.")

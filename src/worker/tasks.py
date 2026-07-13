@@ -49,7 +49,8 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
             InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
         ],
         [
-            InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}")
+            InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
+            InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
         ]
     ])
 
