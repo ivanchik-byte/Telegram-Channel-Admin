@@ -1,6 +1,15 @@
 from html import escape
 import os
 from aiogram import Router, F, Bot
+from aiogram.fsm.state import State, StatesGroup
+class MediaReplacement(StatesGroup):
+    waiting_for_media = State()
+
+class TextReplacement(StatesGroup):
+    waiting_for_text = State()
+
+
+
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command, BaseFilter, CommandObject
 from src.core.logger import logger
@@ -470,11 +479,6 @@ async def cmd_help(message: Message):
     await message.reply(help_text, parse_mode="HTML")
 
 
-class MediaReplacement(StatesGroup):
-    waiting_for_media = State()
-
-class TextReplacement(StatesGroup):
-    waiting_for_text = State()
 
 
 @router.callback_query(F.data.startswith("change_media_"), IsModeratorFilter())
