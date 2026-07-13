@@ -698,8 +698,8 @@ async def cb_quick_reset_interval(callback: CallbackQuery):
         queued_ids = result.scalars().all()
         
     from arq import create_pool
-    from src.core.config import get_redis_settings
-    redis = await create_pool(get_redis_settings())
+    from arq.connections import RedisSettings
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
         for q_id in queued_ids:
             await redis.enqueue_job('process_post_task', q_id)
@@ -752,8 +752,8 @@ async def reply_reset_interval(message: Message):
         queued_ids = result.scalars().all()
         
     from arq import create_pool
-    from src.core.config import get_redis_settings
-    redis = await create_pool(get_redis_settings())
+    from arq.connections import RedisSettings
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
         for q_id in queued_ids:
             await redis.enqueue_job('process_post_task', q_id)
@@ -842,8 +842,8 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
         return
 
     from arq import create_pool
-    from src.core.config import get_redis_settings
-    redis = await create_pool(get_redis_settings())
+    from arq.connections import RedisSettings
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
         await redis.enqueue_job('process_post_task', post_id)
         await message.reply(f"Пост принят для ручной обработки (ID: {post_id}). Запускаю ИИ-рерайт...")
