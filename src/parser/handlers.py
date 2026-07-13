@@ -14,6 +14,25 @@ def calculate_post_hash(text: str) -> str:
     return hashlib.md5(normalized.encode('utf-8')).hexdigest()
 
 
+def get_telegram_link(event: events.NewMessage.Event) -> str:
+    """Constructs direct link to the Telegram post."""
+    chat = event.chat
+    message_id = event.id
+    if chat and hasattr(chat, 'username') and chat.username:
+        return f"https://t.me/{chat.username}/{message_id}"
+    
+    # Fallback to private link structure
+    chat_id = event.chat_id
+    str_id = str(chat_id)
+    if str_id.startswith("-100"):
+        clean_id = str_id[4:]
+    elif str_id.startswith("-"):
+        clean_id = str_id[1:]
+    else:
+        clean_id = str_id
+    return f"https://t.me/c/{clean_id}/{message_id}"
+
+
 async def new_message_handler(event: events.NewMessage.Event):
     text = event.message.message or ""
 
@@ -24,6 +43,7 @@ async def new_message_handler(event: events.NewMessage.Event):
     channel_id = event.chat_id
     message_id = event.id
     post_hash = calculate_post_hash(text)
+    source_link = get_telegram_link(event)
 
     async with async_session_maker() as session:
         settings = await SettingsRepository.get_settings(session)
@@ -78,6 +98,7 @@ async def new_message_handler(event: events.NewMessage.Event):
             text=text,
             media_path=media_path,
             media_type=media_type,
+            source_link=source_link,
             status=initial_status
         )
 

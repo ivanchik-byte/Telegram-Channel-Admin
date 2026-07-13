@@ -8,7 +8,7 @@ logger = logging.getLogger("TG_Admin")
 
 class PostRepository:
     @staticmethod
-    async def process_new_post(session: AsyncSession, channel_id: int, message_id: int, post_hash: str, text: str, media_path: str | None = None, media_type: str | None = None, status: str = 'seen'):
+    async def process_new_post(session: AsyncSession, channel_id: int, message_id: int, post_hash: str, text: str, media_path: str | None = None, media_type: str | None = None, source_link: str | None = None, status: str = 'seen'):
         """
         Атомарный UPSERT: insert ... on conflict do nothing.
         Возвращает id нового поста или None при дубликате.
@@ -20,6 +20,7 @@ class PostRepository:
             text=text,
             media_path=media_path,
             media_type=media_type,
+            source_link=source_link,
             status=status
         ).on_conflict_do_nothing(
             index_elements=['source_channel_id', 'source_message_id']

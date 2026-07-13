@@ -17,6 +17,7 @@ class ProcessedPost(Base):
     rewritten_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     media_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     media_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    source_link: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # timezone=True → TIMESTAMPTZ in PostgreSQL; server_default evaluated per-row on DB side
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

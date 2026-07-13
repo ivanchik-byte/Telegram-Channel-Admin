@@ -32,7 +32,7 @@ def contains_ad(text: str) -> bool:
     return False
 
 
-async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None):
+async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None, source_link: str | None = None):
     """
     Отправляет карточку модерации в MODERATOR_CHAT_ID.
     Статус поста уже выставлен в 'moderating' вызывающим кодом до вызова этой функции.
@@ -56,6 +56,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
 
     try:
         bot = ctx['bot']
+        sent = False
         if media_path and media_type:
             try:
                 media_file = FSInputFile(media_path)
@@ -84,18 +85,26 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
                         parse_mode=ParseMode.HTML
                     )
                 logger.info(f"[Worker] Пост {post_id} с медиа отправлен на модерацию.")
-                return
+                sent = True
             except Exception as e:
                 logger.error(f"[Worker] Ошибка отправки медиа для поста {post_id}: {e}. Отправляем как текст.")
                 # Fallback to text if media sending fails
                 
-        await bot.send_message(
-            chat_id=settings.MODERATOR_CHAT_ID,
-            text=text_to_send,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        logger.info(f"[Worker] Пост {post_id} отправлен на модерацию (текст).")
+        if not sent:
+            await bot.send_message(
+                chat_id=settings.MODERATOR_CHAT_ID,
+                text=text_to_send,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            logger.info(f"[Worker] Пост {post_id} отправлен на модерацию (текст).")
+
+        # Send source link as next message if available
+        if source_link:
+            await bot.send_message(
+                chat_id=settings.MODERATOR_CHAT_ID,
+                text=f"Источник: {source_link}"
+            )
     except Exception as e:
         # Статус не меняем: пост в 'moderating' с rewritten_text, можно восстановить.
         logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
@@ -179,6 +188,7 @@ async def process_post_task(ctx, post_id: int):
         post_source_channel_id = post.source_channel_id
         post_media_path = post.media_path
         post_media_type = post.media_type
+        post_source_link = post.source_link
 
         # Дедупликация: ищем ранее добавленный пост с тем же хэшем
         duplicate_check_stmt = select(ProcessedPost).where(
@@ -254,7 +264,7 @@ async def process_post_task(ctx, post_id: int):
     # Сессия закрыта — теперь безопасно делать долгие сетевые вызовы
 
     if is_duplicate_ready:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text, post_media_path, post_media_type)
+        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text, post_media_path, post_media_type, post_source_link)
         return
 
     # --- Шаг 2: AI-рерайт — БД-сессия закрыта ---
@@ -279,7 +289,7 @@ async def process_post_task(ctx, post_id: int):
             logger.error(f"[Worker] Пост {post_id} переведен в статус failed.")
 
     if rewritten_text:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type)
+        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type, post_source_link)
         
         # Обновляем next_post_time после успешной отправки
         from src.database.repository import SettingsRepository
