@@ -326,7 +326,7 @@ async def find_best_post_task(ctx, hours: int):
 
         post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
         
-    prompt = "Ниже список постов. Выбери ОДИН самый интересный, виральный и полезный пост. Верни ТОЛЬКО его числовой ID, без лишних слов и символов.\n\n" + str(post_data)
+    prompt = "Ниже список постов. Выбери до 6 самых интересных, виральных и полезных постов. Верни ТОЛЬКО их числовые ID через запятую, без лишних слов, в порядке убывания интересности (самый крутой - первый).\n\n" + str(post_data)
     
     client: AsyncOpenAI = ctx['ai_client']
     try:
@@ -335,31 +335,31 @@ async def find_best_post_task(ctx, hours: int):
             messages=[{"role": "user", "content": prompt}],
             extra_body=settings.AI_EXTRA_BODY or {}
         )
-        best_id_str = response.choices[0].message.content.strip()
-        # Ищем число в ответе (иногда ИИ может написать "ID: 123")
+        best_ids_str = response.choices[0].message.content.strip()
         import re
-        match = re.search(r'\d+', best_id_str)
-        if match:
-            best_id = int(match.group())
+        matches = re.findall(r'\d+', best_ids_str)
+        if matches:
+            best_ids = [int(m) for m in matches[:6]]
         else:
-            raise ValueError(f"Нет числа в ответе: {best_id_str}")
+            raise ValueError(f"Нет чисел в ответе: {best_ids_str}")
     except Exception as e:
         logger.error(f"[Worker] Ошибка при выборе лучшего поста: {e}")
         return
 
-    # Process best_id, mark others as filtered_ad
     async with async_session_maker() as session:
-        found = False
+        found_first = None
         for p in posts:
-            if p.id == best_id:
-                found = True
+            if p.id in best_ids:
+                if found_first is None and p.id == best_ids[0]:
+                    found_first = p.id
                 await PostRepository.update_status(session, p.id, 'queued')
+                # Enqueue all selected posts
                 await ctx['redis'].enqueue_job('process_post_task', p.id)
             else:
                 await PostRepository.update_status(session, p.id, 'filtered_ad')
                 
-        if found:
+        if best_ids:
             bot = ctx['bot']
-            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Выбран лучший пост из {len(posts)} кандидатов. Ожидайте рерайт.")
+            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.")
         else:
-            logger.error(f"[Worker] Выбранный ID {best_id} не найден в списке!")
+            logger.error(f"[Worker] Выбранные ID не найдены в списке!")
