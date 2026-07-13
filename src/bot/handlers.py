@@ -718,6 +718,64 @@ async def cb_quick_reset_interval(callback: CallbackQuery):
         await callback.answer("Интервал сброшен!")
 
 
+# --- Reply Keyboard Button Handlers ---
+
+@router.message(F.text == "Статус", IsModeratorFilter())
+async def reply_status(message: Message):
+    await cmd_status(message)
+
+
+@router.message(F.text == "Помощь", IsModeratorFilter())
+async def reply_help(message: Message):
+    await cmd_help(message)
+
+
+@router.message(F.text == "Пауза 8ч", IsModeratorFilter())
+async def reply_pause_8h(message: Message):
+    pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, pause_until=pause_until)
+    await message.reply("Бот поставлен на паузу на 8 часов (до " + pause_until.strftime('%Y-%m-%d %H:%M:%S') + " UTC).")
+
+
+@router.message(F.text == "Возобновить", IsModeratorFilter())
+async def reply_resume(message: Message):
+    await cmd_resume(message)
+
+
+@router.message(F.text == "Сбросить интервал", IsModeratorFilter())
+async def reply_reset_interval(message: Message):
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, next_post_time=None)
+        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
+        result = await session.execute(stmt)
+        queued_ids = result.scalars().all()
+        
+    from arq import create_pool
+    from src.core.config import get_redis_settings
+    redis = await create_pool(get_redis_settings())
+    try:
+        for q_id in queued_ids:
+            await redis.enqueue_job('process_post_task', q_id)
+    finally:
+        await redis.close()
+        
+    if queued_ids:
+        await message.reply(f"Интервал сброшен! Запущено {len(queued_ids)} постов в обработку.")
+    else:
+        await message.reply("Интервал сброшен!")
+
+
+@router.message(F.text == "Очистить очередь", IsModeratorFilter())
+async def reply_clear_confirm(message: Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Да, очистить", callback_data="btn_quick_clear_yes"),
+            InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
+        ]
+    ])
+    await message.reply("Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?", reply_markup=keyboard)
+
 @router.message(IsModeratorFilter())
 async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
     current_state = await state.get_state()
@@ -791,61 +849,3 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
         await message.reply(f"Пост принят для ручной обработки (ID: {post_id}). Запускаю ИИ-рерайт...")
     finally:
         await redis.close()
-
-# --- Reply Keyboard Button Handlers ---
-
-@router.message(F.text == "Статус", IsModeratorFilter())
-async def reply_status(message: Message):
-    await cmd_status(message)
-
-
-@router.message(F.text == "Помощь", IsModeratorFilter())
-async def reply_help(message: Message):
-    await cmd_help(message)
-
-
-@router.message(F.text == "Пауза 8ч", IsModeratorFilter())
-async def reply_pause_8h(message: Message):
-    pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, pause_until=pause_until)
-    await message.reply("Бот поставлен на паузу на 8 часов (до " + pause_until.strftime('%Y-%m-%d %H:%M:%S') + " UTC).")
-
-
-@router.message(F.text == "Возобновить", IsModeratorFilter())
-async def reply_resume(message: Message):
-    await cmd_resume(message)
-
-
-@router.message(F.text == "Сбросить интервал", IsModeratorFilter())
-async def reply_reset_interval(message: Message):
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, next_post_time=None)
-        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
-        result = await session.execute(stmt)
-        queued_ids = result.scalars().all()
-        
-    from arq import create_pool
-    from src.core.config import get_redis_settings
-    redis = await create_pool(get_redis_settings())
-    try:
-        for q_id in queued_ids:
-            await redis.enqueue_job('process_post_task', q_id)
-    finally:
-        await redis.close()
-        
-    if queued_ids:
-        await message.reply(f"Интервал сброшен! Запущено {len(queued_ids)} постов в обработку.")
-    else:
-        await message.reply("Интервал сброшен!")
-
-
-@router.message(F.text == "Очистить очередь", IsModeratorFilter())
-async def reply_clear_confirm(message: Message):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Да, очистить", callback_data="btn_quick_clear_yes"),
-            InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
-        ]
-    ])
-    await message.reply("Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?", reply_markup=keyboard)

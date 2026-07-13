@@ -2,6 +2,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.models import ProcessedPost
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger("TG_Admin")
@@ -21,7 +22,8 @@ class PostRepository:
             media_path=media_path,
             media_type=media_type,
             source_link=source_link,
-            status=status
+            status=status,
+            created_at=datetime.now(timezone.utc)
         ).on_conflict_do_nothing(
             index_elements=['source_channel_id', 'source_message_id']
         ).returning(ProcessedPost.id)
