@@ -197,46 +197,55 @@ async def process_reject(callback: CallbackQuery):
 
 async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
     display_text = escape((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
-    text_to_send = f"{i18n.get('card_new_post', channel_id=post.source_channel_id)}\n\n{display_text}"
     
+    # Добавляем ссылку на источник в конец текста, если она есть
+    text_to_send = display_text
+    if post.source_link:
+        text_to_send += f"\n\n<a href='{post.source_link}'>Источник</a>"
+        
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post.id}"),
-            InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post.id}")
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish_{post.id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{post.id}")
         ],
         [
-            InlineKeyboardButton(text="Текст", callback_data=f"edit_{post.id}"),
-            InlineKeyboardButton(text="Медиа", callback_data=f"change_media_{post.id}")
+            InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_{post.id}"),
+            InlineKeyboardButton(text="🖼 Медиа", callback_data=f"change_media_{post.id}")
         ]
     ])
 
-    sent = False
-    if post.media_path and post.media_type:
-        import os
-        abs_media_path = os.path.abspath(post.media_path)
-        if os.path.exists(abs_media_path):
+    from src.core.config import settings
+    chat_ids_to_send = [chat_id]
+    
+    # Если chat_id (обычно это группа) отличается от админского ID (лички), отправляем в оба
+    if settings.ADMIN_IDS and str(settings.ADMIN_IDS[0]) != str(chat_id):
+        chat_ids_to_send.append(settings.ADMIN_IDS[0])
+
+    for target_chat_id in set(chat_ids_to_send):
+        sent = False
+        if post.media_path and post.media_type:
+            import os
+            abs_media_path = os.path.abspath(post.media_path)
+            if os.path.exists(abs_media_path):
+                try:
+                    media_file = FSInputFile(abs_media_path)
+                    if post.media_type == 'photo':
+                        await bot.send_photo(chat_id=target_chat_id, photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                    elif post.media_type == 'video':
+                        await bot.send_video(chat_id=target_chat_id, video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                    else:
+                        await bot.send_document(chat_id=target_chat_id, document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                    sent = True
+                except Exception as e:
+                    logger.error(f"[Bot] Error sending media to {target_chat_id}: {e}")
+
+        if not sent:
             try:
-                media_file = FSInputFile(abs_media_path)
-                if post.media_type == 'photo':
-                    await bot.send_photo(chat_id=chat_id, photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                elif post.media_type == 'video':
-                    await bot.send_video(chat_id=chat_id, video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                else:
-                    await bot.send_document(chat_id=chat_id, document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                sent = True
+                await bot.send_message(chat_id=target_chat_id, text=text_to_send, reply_markup=keyboard, parse_mode="HTML")
             except Exception as e:
-                logger.error(f"[Bot] Error sending media: {e}")
-
-    if not sent:
-        try:
-            await bot.send_message(chat_id=chat_id, text=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-        except Exception as e:
-            if "group chat was upgraded to a supergroup chat" in str(e):
-                logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
-            raise
-
-    if post.source_link:
-        await bot.send_message(chat_id=chat_id, text=f"Источник: {post.source_link}")
+                if "group chat was upgraded to a supergroup chat" in str(e):
+                    logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
+                logger.error(f"[Bot] Error sending message to {target_chat_id}: {e}")
 
 @router.message(F.text == "\U0001f4cb Модерация", IsModeratorFilter())
 async def reply_moderation(message: Message, bot: Bot):
@@ -564,7 +573,7 @@ async def cmd_help(message: Message):
         "- Парсить сейчас — принудительно загрузить последние 10 сообщений из каналов.\n"
         "- Найти лучший пост — загрузить посты, сбросить интервал и выбрать ТОП-6 (1 на модерацию, 5 в очередь).\n"
         "- Статус — настройки, режим работы, текущая очередь и задержки.\n"
-        "- Возобновить / Пауза 8ч / Сбросить интервал / Очистить queue.\n\n"
+        "- Возобновить / Пауза 8ч / Очистить queue.\n\n"
         "<b>Управление режимами:</b>\n"
         "- /mode auto — автоматический режим (1 пост на модерации, остальные в очереди).\n"
         "- /mode curation — режим кураторства (все посты собираются в корзину без рерайта).\n\n"
@@ -579,9 +588,12 @@ async def cmd_help(message: Message):
         "- /resume — возобновить работу бота (снять паузу).\n\n"
         "<b>Другие команды:</b>\n"
         "- /status — посмотреть настройки, режим и статистику.\n"
-        "- /best [время] — принудительно запустить парсер и выбрать ТОП-6 лучших постов за период (по умолчанию 24h).\n"
+        "- /best [время] — принудительно запустить парсер и выбрать ТОП-6 лучших постов за период.\n"
         "  Пример: /best 24h или /best 12h\n"
-        "- /parse — принудительно загрузить последние 10 сообщений из каждого канала.\n"
+        "- /parse [кол-во или время],[кол-во каналов] — ручной парсинг.\n"
+        "  Пример: /parse 24h,5 (парсинг постов за 24ч из 5 случайных каналов)\n"
+        "  Пример: /parse 10,2 (парсинг последних 10 постов из 2 случайных каналов)\n"
+        "  Пример: /parse 5 (парсинг 5 последних постов со всех каналов)\n"
         "- /clear — полностью очистить очередь публикации и корзину.\n"
     )
     await message.reply(help_text, parse_mode="HTML")
@@ -668,20 +680,33 @@ async def cmd_parse(message: Message, command: CommandObject):
     
     limit = '5'
     num_channels = '0'
+    time_offset = ''
+
     if command.args:
-        parts = command.args.split()
-        if len(parts) >= 1 and parts[0].isdigit():
-            limit = parts[0]
-        if len(parts) >= 2 and parts[1].isdigit():
-            num_channels = parts[1]
-        
+        args = command.args.replace(' ', ',').split(',')
+        args = [a for a in args if a]
+        if args:
+            # First arg can be time like 24h or number like 5
+            first = args[0].strip()
+            if first.isdigit():
+                limit = first
+            else:
+                time_offset = first
+        if len(args) >= 2:
+            second = args[1].strip()
+            if second.isdigit():
+                num_channels = second
+
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
-        await redis.set('force_parse', f"{limit}:{num_channels}")
-        if num_channels != '0':
-            await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из {num_channels} случайных каналов...")
+        # format: limit|num_channels|time_offset
+        await redis.set('force_parse', f"{limit}|{num_channels}|{time_offset}")
+        
+        target_str = f"{num_channels} случайных каналов" if num_channels != '0' else "всех каналов"
+        if time_offset:
+            await message.reply(f"Сигнал отправлен. Парсер загружает сообщения за последние {time_offset} из {target_str}...")
         else:
-            await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из всех каналов...")
+            await message.reply(f"Сигнал отправлен. Парсер загружает последние {limit} сообщений из {target_str}...")
     except Exception as e:
         await message.reply(f"Ошибка при отправке сигнала парсеру: {e}")
     finally:
@@ -758,8 +783,16 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
         return
 
     text = message.text or message.caption or ""
-    if not text.strip() and not message.photo and not message.video and not message.document:
-        await message.reply("Пожалуйста, отправьте текст или медиафайл для рерайта.")
+    if not text:
+        # Check if there is a caption
+        if message.caption:
+            text = message.caption
+        else:
+            await message.reply("Пожалуйста, отправьте текст или медиа с подписью.")
+            return
+
+    if len(text.strip()) < 5 and not message.photo and not message.video and not message.document:
+        await message.reply("⚠️ Текст слишком короткий. Отправьте нормальный текст для рерайта (минимум 5 символов), чтобы избежать выдумок ИИ.")
         return
 
     media_type = None

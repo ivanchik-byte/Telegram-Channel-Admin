@@ -22,14 +22,29 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     val_str = val.decode('utf-8')
                     limit = 5
                     num_channels = 0
-                    if ':' in val_str:
-                        parts = val_str.split(':')
+                    time_offset = ''
+
+                    if '|' in val_str:
+                        parts = val_str.split('|')
                         limit = int(parts[0]) if parts[0].isdigit() else 5
-                        num_channels = int(parts[1]) if parts[1].isdigit() else 0
+                        if len(parts) > 1:
+                            num_channels = int(parts[1]) if parts[1].isdigit() else 0
+                        if len(parts) > 2:
+                            time_offset = parts[2]
                     else:
+                        # Fallback for old format
                         limit = int(val_str) if val_str.isdigit() else 5
+
+                    offset_date = None
+                    if time_offset:
+                        from src.core.utils import parse_time_suffix
+                        from datetime import datetime, timezone
+                        delta = parse_time_suffix(time_offset)
+                        if delta:
+                            offset_date = datetime.now(timezone.utc) - delta
+                            limit = None # Fetch ALL messages since offset_date
                     
-                    logger.info(f"Manual parsing triggered! Fetching last {limit} messages from channels (num_channels={num_channels}).")
+                    logger.info(f"Manual parsing triggered! time_offset={time_offset}, limit={limit}, num_channels={num_channels}.")
                     
                     target_channels = channels
                     if num_channels > 0 and num_channels < len(channels):
@@ -48,7 +63,20 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     for channel in target_channels:
                         try:
                             logger.info(f"Fetching from {channel}...")
-                            async for msg in client.iter_messages(channel, limit=limit):
+                            kwargs = {'limit': limit}
+                            if offset_date:
+                                kwargs['offset_date'] = offset_date
+                                kwargs['reverse'] = True # to fetch from old to new, but we might want new to old
+                                # Actually, offset_date in iter_messages gets messages older than the date. 
+                                # We want messages NEWER than the date. 
+                                # Let's fetch until we hit a message older than offset_date.
+                                kwargs.pop('offset_date')
+                                kwargs.pop('reverse', None)
+                            
+                            async for msg in client.iter_messages(channel, **kwargs):
+                                if offset_date and msg.date and msg.date < offset_date:
+                                    break # Stop fetching when we reach messages older than our offset
+
                                 if msg.message:
                                     res = await new_message_handler(DummyEvent(msg, client))
                                     if res is not None:

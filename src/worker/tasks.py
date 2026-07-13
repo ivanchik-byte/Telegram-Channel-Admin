@@ -191,6 +191,12 @@ async def process_post_task(ctx, post_id: int):
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
             return
 
+        # Резервируем пост атомарно
+        post = await PostRepository.atomic_status_update(session, post_id, 'queued', 'ai_processing')
+        if not post:
+            logger.info(f"[Worker] Пост {post_id} перехвачен другим воркером или изменил статус.")
+            return
+
         post_text = post.text
         post_source_channel_id = post.source_channel_id
         post_media_path = post.media_path
@@ -235,6 +241,7 @@ async def process_post_task(ctx, post_id: int):
                         f"Откладываем на 30 сек."
                     )
                     # Re-enqueue with delay instead of raising RuntimeError (which caused blind retries)
+                    await PostRepository.update_status(session, post_id, 'queued', required_current_status='ai_processing')
                     await ctx['redis'].enqueue_job(
                         'process_post_task', post_id, _defer_by=timedelta(seconds=30)
                     )
@@ -255,17 +262,10 @@ async def process_post_task(ctx, post_id: int):
             if contains_ad(post_text):
                 logger.info(f"[Worker] Пост {post_id} отфильтрован как реклама.")
                 await PostRepository.update_status(
-                    session, post_id, 'filtered_ad', required_current_status='queued'
+                    session, post_id, 'filtered_ad', required_current_status='ai_processing'
                 )
                 return
 
-            success = await PostRepository.update_status(
-                session, post_id, 'ai_processing', required_current_status='queued'
-            )
-            if not success:
-                logger.warning(f"[Worker] Пост {post_id} изменил статус. Отмена.")
-                return
-                
             logger.info(f"[Worker] Пост {post_id} отправлен на AI-рерайт.")
 
     # Сессия закрыта — теперь безопасно делать долгие сетевые вызовы
