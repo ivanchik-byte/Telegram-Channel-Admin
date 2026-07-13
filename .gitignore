@@ -13,5 +13,6 @@ data/
 *.session-journal
 *.md
 !README.md
+!COMMANDS.md
 .idea/
 .vscode/
