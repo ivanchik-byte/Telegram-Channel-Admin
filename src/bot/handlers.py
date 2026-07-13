@@ -65,7 +65,6 @@ def get_main_reply_keyboard():
                 KeyboardButton(text="\u25b6 Возобновить")
             ],
             [
-                KeyboardButton(text="\U0001f504 Сбросить интервал"),
                 KeyboardButton(text="\U0001f5d1 Очистить все")
             ]
         ],
@@ -143,12 +142,28 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
 
             _cleanup_media(post.media_path, "публикации")
 
+            await _apply_interval_after_moderation(session)
+
             await callback.answer(i18n.get('msg_published_alert'))
 
             logger.info(f"[Bot] Пост {post_id} опубликован в канал.")
         except Exception as e:
             logger.error(f"[Bot] Ошибка публикации поста {post_id}: {e}")
             await callback.answer(i18n.get('msg_publish_error'), show_alert=True)
+
+async def _apply_interval_after_moderation(session):
+    from src.database.repository import SettingsRepository
+    import random
+    from datetime import datetime, timezone, timedelta
+    
+    settings = await SettingsRepository.get_settings(session)
+    if settings.interval_max > 0:
+        delay = random.randint(settings.interval_min, settings.interval_max)
+        next_time = datetime.now(timezone.utc) + timedelta(seconds=delay)
+        await SettingsRepository.update_settings(session, next_post_time=next_time)
+        logger.info(f"[Bot] Интервал запущен: следующий пост будет через {delay} секунд.")
+    else:
+        await SettingsRepository.update_settings(session, next_post_time=None)
 
 @router.callback_query(F.data.startswith("reject_"), IsModeratorFilter())
 async def process_reject(callback: CallbackQuery):
@@ -173,6 +188,8 @@ async def process_reject(callback: CallbackQuery):
             await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
             
         _cleanup_media(post.media_path, "отклонения")
+
+        await _apply_interval_after_moderation(session)
 
         await callback.answer(i18n.get('msg_rejected_alert'))
         logger.info(f"[Bot] Пост {post_id} отклонен.")
@@ -703,29 +720,6 @@ async def reply_pause_8h(message: Message):
 @router.message(F.text == "\u25b6 Возобновить", IsModeratorFilter())
 async def reply_resume(message: Message):
     await cmd_resume(message)
-
-
-@router.message(F.text == "\U0001f504 Сбросить интервал", IsModeratorFilter())
-async def reply_reset_interval(message: Message):
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, next_post_time=None)
-        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
-        result = await session.execute(stmt)
-        queued_ids = result.scalars().all()
-        
-    from arq import create_pool
-    from arq.connections import RedisSettings
-    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
-    try:
-        for q_id in queued_ids:
-            await redis.enqueue_job('process_post_task', q_id)
-    finally:
-        await redis.close()
-        
-    if queued_ids:
-        await message.reply(f"Интервал сброшен! Запущено {len(queued_ids)} постов в обработку.")
-    else:
-        await message.reply("Интервал сброшен!")
 
 
 @router.message(F.text.in_({"Очистить очередь", "Очистить все", "\U0001f5d1 Очистить все"}), IsModeratorFilter())
