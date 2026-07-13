@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     
     # Bot Settings
     TELEGRAM_BOT_TOKEN: str
-    MODERATOR_CHAT_ID: str
+    MODERATOR_CHAT_ID: str = ""
     TARGET_CHANNEL_ID: str
     
     # AI Settings
@@ -46,6 +46,15 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @property
+    def effective_moderator_chat_id(self) -> str:
+        """Returns MODERATOR_CHAT_ID if set, else falls back to the first admin's PM."""
+        if self.MODERATOR_CHAT_ID.strip():
+            return self.MODERATOR_CHAT_ID.strip()
+        if self.ADMIN_IDS:
+            return str(self.ADMIN_IDS[0])
+        return ""
 
     @property
     def parsed_channels(self) -> List[Union[int, str]]:

@@ -63,7 +63,7 @@ async def check_force_parse(client: TelegramClient, channels: list):
                             url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
                             text = f"Ручной парсинг успешно завершен. Импортировано новых уникальных постов: {parsed_count}."
                             await http_client.post(url, json={
-                                "chat_id": settings.MODERATOR_CHAT_ID,
+                                "chat_id": settings.effective_moderator_chat_id,
                                 "text": text
                             })
                     except Exception as err:

@@ -62,7 +62,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
                 media_file = FSInputFile(media_path)
                 if media_type == 'photo':
                     await bot.send_photo(
-                        chat_id=settings.MODERATOR_CHAT_ID,
+                        chat_id=settings.effective_moderator_chat_id,
                         photo=media_file,
                         caption=text_to_send,
                         reply_markup=keyboard,
@@ -70,7 +70,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
                     )
                 elif media_type == 'video':
                     await bot.send_video(
-                        chat_id=settings.MODERATOR_CHAT_ID,
+                        chat_id=settings.effective_moderator_chat_id,
                         video=media_file,
                         caption=text_to_send,
                         reply_markup=keyboard,
@@ -78,7 +78,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
                     )
                 else:
                     await bot.send_document(
-                        chat_id=settings.MODERATOR_CHAT_ID,
+                        chat_id=settings.effective_moderator_chat_id,
                         document=media_file,
                         caption=text_to_send,
                         reply_markup=keyboard,
@@ -92,7 +92,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
                 
         if not sent:
             await bot.send_message(
-                chat_id=settings.MODERATOR_CHAT_ID,
+                chat_id=settings.effective_moderator_chat_id,
                 text=text_to_send,
                 reply_markup=keyboard,
                 parse_mode=ParseMode.HTML
@@ -102,7 +102,7 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
         # Send source link as next message if available
         if source_link:
             await bot.send_message(
-                chat_id=settings.MODERATOR_CHAT_ID,
+                chat_id=settings.effective_moderator_chat_id,
                 text=f"Источник: {source_link}"
             )
     except Exception as e:
@@ -324,7 +324,7 @@ async def find_best_post_task(ctx, hours: int):
         if not posts:
             logger.info("[Worker] Нет постов для выбора.")
             bot = ctx['bot']
-            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Нет накопленных постов за последние {hours}ч.")
+            await bot.send_message(settings.effective_moderator_chat_id, f"Нет накопленных постов за последние {hours}ч.")
             return
 
         post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
@@ -363,6 +363,6 @@ async def find_best_post_task(ctx, hours: int):
                 
         if best_ids:
             bot = ctx['bot']
-            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.")
+            await bot.send_message(settings.effective_moderator_chat_id, f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.")
         else:
             logger.error(f"[Worker] Выбранные ID не найдены в списке!")
