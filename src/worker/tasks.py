@@ -160,19 +160,6 @@ async def process_post_task(ctx, post_id: int):
     from datetime import datetime, timezone
     import random
     
-    async with async_session_maker() as session:
-        settings = await SettingsRepository.get_settings(session)
-        now = datetime.now(timezone.utc)
-        if settings.next_post_time and settings.next_post_time > now:
-            delay = (settings.next_post_time - now).total_seconds()
-            jitter = random.uniform(1.0, 5.0)
-            defer_sec = delay + jitter
-            logger.info(f"[Worker] Интервал не прошел. Откладываем пост {post_id} на {defer_sec:.1f} сек.")
-            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=defer_sec))
-            return
-
-    # --- Шаг 1: Читаем данные, дедупликация, начальная фильтрация — закрываем сессию ---
-    # Сессия НЕ держится открытой во время AI-запроса (backoff до ~62 сек).
     post_text: str | None = None
     post_source_channel_id: int | None = None
     is_duplicate_ready = False
@@ -183,8 +170,25 @@ async def process_post_task(ctx, post_id: int):
         result = await session.execute(stmt)
         post = result.scalars().first()
 
-        if not post or not post.text:
-            logger.warning(f"[Worker] Пост {post_id} не найден или не содержит текста.")
+        if not post or post.status != 'queued' or not post.text:
+            logger.info(f"[Worker] Пост {post_id} не найден, не в статусе queued или не содержит текста. Игнорируем.")
+            return
+
+        settings = await SettingsRepository.get_settings(session)
+        now = datetime.now(timezone.utc)
+        if settings.next_post_time and settings.next_post_time > now:
+            delay = (settings.next_post_time - now).total_seconds()
+            jitter = random.uniform(1.0, 5.0)
+            defer_sec = delay + jitter
+            logger.info(f"[Worker] Интервал не прошел. Откладываем пост {post_id} на {defer_sec:.1f} сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=defer_sec))
+            return
+
+        # Check moderation limits
+        mod_count, queued_count = await PostRepository.get_queue_counts(session)
+        if settings.mode == 'auto' and mod_count >= 1:
+            logger.info(f"[Worker] В авторежиме уже есть пост на модерации. Откладываем пост {post_id} на 60 сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
             return
 
         post_text = post.text
@@ -295,16 +299,6 @@ async def process_post_task(ctx, post_id: int):
         await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type, post_source_link)
         
         # Обновляем next_post_time после успешной отправки
-        from src.database.repository import SettingsRepository
-        from datetime import datetime, timezone
-        import random
-        async with async_session_maker() as session:
-            settings = await SettingsRepository.get_settings(session)
-            if settings.interval_min > 0 or settings.interval_max > 0:
-                delay_seconds = random.randint(settings.interval_min, max(settings.interval_min, settings.interval_max))
-                next_time = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-                await SettingsRepository.update_settings(session, next_post_time=next_time)
-                logger.info(f"[Worker] Следующий пост будет отправлен не раньше чем через {delay_seconds} секунд.")
 
 
 async def find_best_post_task(ctx, hours: int):
