@@ -1,6 +1,6 @@
 from arq.connections import RedisSettings
 from src.core.config import settings
-from src.worker.tasks import process_post_task
+from src.worker.tasks import process_post_task, find_best_post_task
 from src.core.logger import logger
 
 from aiogram import Bot
@@ -27,7 +27,7 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_post_task]
+    functions = [process_post_task, find_best_post_task]
     on_startup = startup
     on_shutdown = shutdown
     max_tries = 5       # максимум попыток для каждой задачи

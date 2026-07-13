@@ -30,14 +30,30 @@ async def check_force_parse(client: TelegramClient, channels: list):
                             self.chat = msg.chat
                             self.client = c
 
+                    parsed_count = 0
                     for channel in channels:
                         try:
                             logger.info(f"Fetching from {channel}...")
                             async for msg in client.iter_messages(channel, limit=limit):
                                 if msg.message:
-                                    await new_message_handler(DummyEvent(msg, client))
+                                    res = await new_message_handler(DummyEvent(msg, client))
+                                    if res is not None:
+                                        parsed_count += 1
                         except Exception as e:
                             logger.error(f"Error parsing channel {channel}: {e}")
+                    
+                    # Send notification to MODERATOR_CHAT_ID via Telegram Bot API
+                    import httpx
+                    try:
+                        async with httpx.AsyncClient() as http_client:
+                            url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+                            text = f"Ручной парсинг успешно завершен. Импортировано новых уникальных постов: {parsed_count}."
+                            await http_client.post(url, json={
+                                "chat_id": settings.MODERATOR_CHAT_ID,
+                                "text": text
+                            })
+                    except Exception as err:
+                        logger.error(f"Failed to send parsing finished notification: {err}")
             except Exception as e:
                 logger.error(f"Error checking force_parse: {e}")
             await asyncio.sleep(5)

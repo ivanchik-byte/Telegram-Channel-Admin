@@ -103,7 +103,7 @@ async def new_message_handler(event: events.NewMessage.Event):
         )
 
         if not post_id:
-            return
+            return None
 
     logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}. Сохранен со статусом: {initial_status}.")
 
@@ -116,3 +116,4 @@ async def new_message_handler(event: events.NewMessage.Event):
             logger.error(f"[Parser] Ошибка отправки в Redis (Arq): {e}. Пост {post_id} помечен как failed.")
             async with async_session_maker() as rollback_session:
                 await PostRepository.update_status(rollback_session, post_id, 'failed')
+    return post_id

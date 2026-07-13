@@ -168,6 +168,66 @@ async def process_reject(callback: CallbackQuery):
         await callback.answer(i18n.get('msg_rejected_alert'))
         logger.info(f"[Bot] Пост {post_id} отклонен.")
 
+
+async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
+    display_text = escape((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
+    text_to_send = f"{i18n.get('card_new_post', channel_id=post.source_channel_id)}\n\n{display_text}"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post.id}"),
+            InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post.id}")
+        ],
+        [
+            InlineKeyboardButton(text="Текст", callback_data=f"edit_{post.id}"),
+            InlineKeyboardButton(text="Медиа", callback_data=f"change_media_{post.id}")
+        ]
+    ])
+
+    sent = False
+    if post.media_path and post.media_type:
+        import os
+        abs_media_path = os.path.abspath(post.media_path)
+        if os.path.exists(abs_media_path):
+            try:
+                media_file = FSInputFile(abs_media_path)
+                if post.media_type == 'photo':
+                    await bot.send_photo(chat_id=chat_id, photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                elif post.media_type == 'video':
+                    await bot.send_video(chat_id=chat_id, video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                else:
+                    await bot.send_document(chat_id=chat_id, document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                sent = True
+            except Exception as e:
+                logger.error(f"[Bot] Error sending media: {e}")
+
+    if not sent:
+        try:
+            await bot.send_message(chat_id=chat_id, text=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+        except Exception as e:
+            if "group chat was upgraded to a supergroup chat" in str(e):
+                logger.error(f"[Bot] MODERATOR_CHAT_ID is outdated due to supergroup migration. Please update .env!")
+            raise
+
+    if post.source_link:
+        await bot.send_message(chat_id=chat_id, text=f"Источник: {post.source_link}")
+
+@router.message(F.text == "Модерация", IsModeratorFilter())
+async def reply_moderation(message: Message, bot: Bot):
+    from sqlalchemy import select
+    from src.database.engine import async_session_maker
+    async with async_session_maker() as session:
+        stmt = select(ProcessedPost).where(ProcessedPost.status == 'moderating').order_by(ProcessedPost.id.asc()).limit(1)
+        result = await session.execute(stmt)
+        post = result.scalars().first()
+        
+    if not post:
+        await message.reply("Очередь модерации пуста.")
+        return
+        
+    await send_mod_card_to_chat(bot, message.chat.id, post)
+
+
 @router.callback_query(F.data.startswith("edit_"), IsModeratorFilter())
 async def process_edit(callback: CallbackQuery, state: FSMContext):
     post_id = _parse_post_id(callback.data)
@@ -559,14 +619,18 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
 # --- Reply Keyboard Button Handlers ---
 
 @router.message(Command('parse'), IsModeratorFilter())
-async def cmd_parse(message: Message):
+async def cmd_parse(message: Message, command: CommandObject):
     from arq.connections import RedisSettings
     from arq import create_pool
     
+    limit = '5'
+    if command.args and command.args.isdigit():
+        limit = command.args
+        
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
-        await redis.set('force_parse', '10')
-        await message.reply("Сигнал на ручной парсинг отправлен. Парсер загружает последние 10 сообщений из каждого канала...")
+        await redis.set('force_parse', limit)
+        await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из каждого канала...")
     except Exception as e:
         await message.reply(f"Ошибка при отправке сигнала парсеру: {e}")
     finally:
@@ -574,7 +638,9 @@ async def cmd_parse(message: Message):
 
 @router.message(F.text == "Парсить сейчас", IsModeratorFilter())
 async def reply_parse_now(message: Message):
-    await cmd_parse(message)
+    class DummyCommand:
+        args = "5"
+    await cmd_parse(message, DummyCommand())
 
 @router.message(F.text == "Найти лучший пост", IsModeratorFilter())
 async def reply_find_best(message: Message):
@@ -698,14 +764,16 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
             await message.reply("Не удалось скачать медиафайл. Попробуйте еще раз.")
             return
 
+    import random
     import hashlib
-    post_hash = hashlib.md5(f"manual_{text}_{datetime.now(timezone.utc).timestamp()}".encode('utf-8')).hexdigest()
+    dummy_message_id = random.randint(1, 1000000000)
+    post_hash = hashlib.md5(f"manual_{text}_{datetime.now(timezone.utc).timestamp()}_{dummy_message_id}".encode('utf-8')).hexdigest()
 
     async with async_session_maker() as session:
         post_id = await PostRepository.process_new_post(
             session=session,
             channel_id=0,
-            message_id=0,
+            message_id=dummy_message_id,
             post_hash=post_hash,
             text=text,
             media_path=media_path,
