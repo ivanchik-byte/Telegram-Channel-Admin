@@ -24,3 +24,28 @@ def parse_time_suffix(time_str: str) -> timedelta | None:
             return timedelta(seconds=int(time_str))
     except ValueError:
         return None
+
+
+def format_seconds_readable(seconds: int) -> str:
+    """Formats a number of seconds into a human-readable string (e.g. '20 мин. 30 сек.')."""
+    if seconds == 0:
+        return "0 сек."
+        
+    days = seconds // 86400
+    seconds %= 86400
+    hours = seconds // 3600
+    seconds %= 3600
+    minutes = seconds // 60
+    secs = seconds % 60
+    
+    parts = []
+    if days > 0:
+        parts.append(f"{days} д.")
+    if hours > 0:
+        parts.append(f"{hours} ч.")
+    if minutes > 0:
+        parts.append(f"{minutes} мин.")
+    if secs > 0 or not parts:
+        parts.append(f"{secs} сек.")
+        
+    return " ".join(parts)

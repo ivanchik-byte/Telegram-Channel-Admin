@@ -166,17 +166,24 @@ async def cmd_start(message: Message):
         )
         return
         
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Статус", callback_data="btn_status_refresh"),
+            InlineKeyboardButton(text="Помощь", callback_data="btn_help")
+        ],
+        [
+            InlineKeyboardButton(text="Пауза 8ч", callback_data="btn_quick_pause_8h"),
+            InlineKeyboardButton(text="Возобновить", callback_data="btn_quick_resume")
+        ],
+        [
+            InlineKeyboardButton(text="Сменить режим", callback_data="btn_quick_toggle_mode")
+        ]
+    ])
+    
     await message.reply(
-        "Привет! Я бот-модератор.\n\n"
-        "<b>Доступные команды:</b>\n"
-        "/status — статус очереди и интервалов\n"
-        "/pause — поставить на паузу\n"
-        "/resume — снять с паузы\n"
-        "/mode auto | curation — сменить режим\n"
-        "/best [время] — выбрать лучший пост\n"
-        "/interval [время] — сменить интервал\n"
-        "/clear — очистить очередь\n\n"
-        "Все команды модерирования доступны администраторам.",
+        "<b>Привет! Я бот-модератор каналов.</b>\n\n"
+        "Вы можете управлять ботом с помощью кнопок ниже или отправить команду /help для полной справки.",
+        reply_markup=keyboard,
         parse_mode="HTML"
     )
 
@@ -238,11 +245,65 @@ async def process_edit_command(message: Message, command: CommandObject):
 
 # --- Admin Commands ---
 
+import re
 from src.database.repository import SettingsRepository
-from src.core.utils import parse_time_suffix
+from src.core.utils import parse_time_suffix, format_seconds_readable
 from datetime import datetime, timezone, timedelta
 from src.database.models import ProcessedPost
 from sqlalchemy import select, update, delete
+
+async def get_status_data():
+    async with async_session_maker() as session:
+        settings = await SettingsRepository.get_settings(session)
+        mod_count, queued_count = await PostRepository.get_queue_counts(session)
+        
+        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'accumulated')
+        acc_result = await session.execute(stmt)
+        accumulated_count = len(acc_result.all())
+        
+        lines = [
+            "<b>Текущий статус бота:</b>\n",
+            f"• <b>Режим:</b> <code>{settings.mode}</code>",
+            f"• <b>Интервал:</b> <code>{format_seconds_readable(settings.interval_min)} - {format_seconds_readable(settings.interval_max)}</code>",
+        ]
+        
+        now = datetime.now(timezone.utc)
+        if settings.pause_until and settings.pause_until > now:
+            if (settings.pause_until - now).days > 365:
+                lines.append("• <b>Пауза:</b> <code>Навсегда</code>")
+            else:
+                pause_sec = int((settings.pause_until - now).total_seconds())
+                lines.append(f"• <b>Пауза до:</b> <code>{settings.pause_until.strftime('%Y-%m-%d %H:%M:%S')} UTC</code> (~{format_seconds_readable(pause_sec)})")
+        else:
+            lines.append("• <b>Пауза:</b> <code>Активен</code>")
+            
+        if settings.next_post_time and settings.next_post_time > now:
+            delay_sec = int((settings.next_post_time - now).total_seconds())
+            lines.append(f"• <b>Следующий пост через:</b> <code>{format_seconds_readable(delay_sec)}</code>")
+            
+        lines.append("")
+        lines.append(f"• <b>На модерации:</b> <code>{mod_count} / 1</code>")
+        lines.append(f"• <b>В очереди (auto):</b> <code>{queued_count} / 5</code>")
+        lines.append(f"• <b>В корзине (curation):</b> <code>{accumulated_count}</code>")
+        
+        text = "\n".join(lines)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Обновить", callback_data="btn_status_refresh"),
+                InlineKeyboardButton(text="Сменить режим", callback_data="btn_quick_toggle_mode")
+            ],
+            [
+                InlineKeyboardButton(text="Пауза 8ч", callback_data="btn_quick_pause_8h"),
+                InlineKeyboardButton(text="Возобновить", callback_data="btn_quick_resume")
+            ],
+            [
+                InlineKeyboardButton(text="Сбросить интервал", callback_data="btn_quick_reset_interval"),
+                InlineKeyboardButton(text="Очистить очередь", callback_data="btn_quick_clear_confirm")
+            ]
+        ])
+        
+        return text, keyboard
 
 @router.message(Command("mode"), IsModeratorFilter())
 async def cmd_mode(message: Message, command: CommandObject):
@@ -292,10 +353,10 @@ async def cmd_interval(message: Message, command: CommandObject):
     if args == "0":
         async with async_session_maker() as session:
             await SettingsRepository.update_settings(session, interval_min=0, interval_max=0)
-        await message.reply("Интервал отключен.")
+        await message.reply("Интервал успешно отключен! Посты будут выходить по мере готовности.")
         return
         
-    parts = args.split("-")
+    parts = [p.strip() for p in re.split(r'[-\u2013\u2014]', args) if p.strip()]
     try:
         min_delta = parse_time_suffix(parts[0])
         max_delta = parse_time_suffix(parts[1]) if len(parts) > 1 else min_delta
@@ -312,7 +373,11 @@ async def cmd_interval(message: Message, command: CommandObject):
         async with async_session_maker() as session:
             await SettingsRepository.update_settings(session, interval_min=interval_min, interval_max=interval_max)
             
-        await message.reply(f"Интервал выдачи постов установлен: от {interval_min} до {interval_max} секунд.")
+        await message.reply(
+            f"<b>Интервал успешно установлен:</b>\n"
+            f"от <b>{format_seconds_readable(interval_min)}</b> до <b>{format_seconds_readable(interval_max)}</b>.",
+            parse_mode="HTML"
+        )
     except Exception:
         await message.reply("Неверный формат. Пример: /interval 20m-50m или /interval 30-60")
 
@@ -320,80 +385,75 @@ async def cmd_interval(message: Message, command: CommandObject):
 @router.message(Command("pause"), IsModeratorFilter())
 async def cmd_pause(message: Message, command: CommandObject):
     pause_until = None
-    msg_text = "Бот поставлен на ВЕЧНУЮ паузу. Парсер отключен.\nДля запуска используйте /resume"
+    msg_text = "<b>Бот поставлен на ВЕЧНУЮ паузу.</b>\nПарсер отключен. Для возобновления работы отправьте /resume."
     
     if command.args:
         delta = parse_time_suffix(command.args)
         if delta:
             pause_until = datetime.now(timezone.utc) + delta
-            msg_text = f"Бот поставлен на паузу до {pause_until.strftime('%Y-%m-%d %H:%M:%S')} UTC."
+            pause_sec = int(delta.total_seconds())
+            msg_text = f"<b>Бот поставлен на паузу на {format_seconds_readable(pause_sec)}</b> (до {pause_until.strftime('%Y-%m-%d %H:%M:%S')} UTC)."
         else:
-            await message.reply("Неверный формат времени. Пример: /pause 60m")
+            await message.reply("Неверный формат времени. Пример: /pause 8h или /pause 30s")
             return
             
     async with async_session_maker() as session:
-        # Для вечной паузы ставим год +100
         if not pause_until:
             pause_until = datetime.now(timezone.utc) + timedelta(days=36500)
         await SettingsRepository.update_settings(session, pause_until=pause_until)
         
-    await message.reply(msg_text)
+    await message.reply(msg_text, parse_mode="HTML")
 
 
 @router.message(Command("resume"), IsModeratorFilter())
 async def cmd_resume(message: Message):
     async with async_session_maker() as session:
         await SettingsRepository.update_settings(session, pause_until=None)
-    await message.reply("Бот возобновил работу (пауза снята).")
+    await message.reply("<b>Бот возобновил работу.</b> Пауза снята, парсер активен.", parse_mode="HTML")
 
 
 @router.message(Command("status"), IsModeratorFilter())
 async def cmd_status(message: Message):
-    async with async_session_maker() as session:
-        settings = await SettingsRepository.get_settings(session)
-        mod_count, queued_count = await PostRepository.get_queue_counts(session)
-        
-        # Считаем accumulated
-        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'accumulated')
-        acc_result = await session.execute(stmt)
-        accumulated_count = len(acc_result.all())
-        
-        lines = [
-            f"<b>Режим:</b> {settings.mode}",
-            f"<b>Интервал:</b> {settings.interval_min}-{settings.interval_max} сек.",
-        ]
-        
-        now = datetime.now(timezone.utc)
-        if settings.pause_until and settings.pause_until > now:
-            lines.append(f"<b>Пауза до:</b> {settings.pause_until.strftime('%Y-%m-%d %H:%M:%S')} UTC")
-        else:
-            lines.append("<b>Пауза:</b> Нет")
-            
-        if settings.next_post_time and settings.next_post_time > now:
-            delay_sec = int((settings.next_post_time - now).total_seconds())
-            if delay_sec > 120:
-                lines.append(f"<b>След. пост через:</b> ~{delay_sec // 60} мин")
-            else:
-                lines.append(f"<b>След. пост через:</b> ~{delay_sec} сек")
-            
-        lines.append("")
-        lines.append(f"<b>На модерации:</b> {mod_count} / 1")
-        lines.append(f"<b>В очереди (auto):</b> {queued_count} / 5")
-        lines.append(f"<b>В корзине (curation):</b> {accumulated_count}")
-        
-        await message.reply("\n".join(lines), parse_mode="HTML")
+    text, keyboard = await get_status_data()
+    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
 
 
 @router.message(Command("clear"), IsModeratorFilter())
 async def cmd_clear(message: Message):
     async with async_session_maker() as session:
-        # Удаляем или переводим в failed все queued и accumulated
         stmt = update(ProcessedPost).where(
             ProcessedPost.status.in_(['queued', 'accumulated'])
         ).values(status='failed')
         await session.execute(stmt)
         await session.commit()
-    await message.reply("Очередь и корзина полностью очищены.")
+    await message.reply("<b>Очередь и корзина полностью очищены.</b>", parse_mode="HTML")
+
+
+@router.message(Command("help"), IsModeratorFilter())
+async def cmd_help(message: Message):
+    help_text = (
+        "<b>Справка по командам бота-модератора</b>\n\n"
+        "<b>Управление режимами:</b>\n"
+        "• /mode auto — автоматический режим (1 пост на модерации, до 5 в очереди).\n"
+        "• /mode curation — режим кураторства (посты собираются в корзину).\n\n"
+        "<b>Управление интервалами:</b>\n"
+        "• /interval [мин]-[макс] — случайная задержка. Поддерживает суффиксы: <code>s</code> (сек), <code>m</code> (мин), <code>h</code> (ч), <code>d</code> (д).\n"
+        "  <i>Пример: /interval 20m-50m или /interval 30s-1h</i>\n"
+        "• /interval [время] — фиксированная задержка.\n"
+        "  <i>Пример: /interval 30s</i>\n"
+        "• /interval 0 — отключить задержку.\n\n"
+        "<b>Пауза и возобновление:</b>\n"
+        "• /pause — поставить бота на вечную паузу.\n"
+        "• /pause [время] — поставить на паузу на указанное время.\n"
+        "  <i>Пример: /pause 8h (на 8 часов) или /pause 30s (на 30 секунд)</i>\n"
+        "• /resume — возобновить работу бота (снять паузу).\n\n"
+        "<b>Другие команды:</b>\n"
+        "• /status — посмотреть настройки, режим и статистику очереди.\n"
+        "• /best [время] — найти лучший пост в корзине за указанный период (для curation).\n"
+        "  <i>Пример: /best 24h или /best 12h</i>\n"
+        "• /clear — полностью очистить очередь и корзину.\n"
+    )
+    await message.reply(help_text, parse_mode="HTML")
 
 
 class MediaReplacement(StatesGroup):
@@ -520,3 +580,222 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
             await message.answer(f"Источник: {post.source_link}")
 
         await message.reply("Медиафайл успешно заменен! Новая карточка отправлена.")
+
+# --- Quick Status Board Callback Handlers ---
+
+@router.callback_query(F.data == "btn_status_refresh", IsModeratorFilter())
+async def cb_status_refresh(callback: CallbackQuery):
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Статус обновлен")
+
+
+@router.callback_query(F.data == "btn_quick_toggle_mode", IsModeratorFilter())
+async def cb_quick_toggle_mode(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        settings = await SettingsRepository.get_settings(session)
+        new_mode = "curation" if settings.mode == "auto" else "auto"
+        await SettingsRepository.update_settings(session, mode=new_mode)
+        
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer(f"Режим изменен на {new_mode}!")
+
+
+@router.callback_query(F.data == "btn_quick_pause_8h", IsModeratorFilter())
+async def cb_quick_pause_8h(callback: CallbackQuery):
+    pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, pause_until=pause_until)
+        
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Бот приостановлен на 8 часов")
+
+
+@router.callback_query(F.data == "btn_quick_resume", IsModeratorFilter())
+async def cb_quick_resume(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, pause_until=None)
+        
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Бот возобновил работу!")
+
+
+@router.callback_query(F.data == "btn_quick_clear_confirm", IsModeratorFilter())
+async def cb_quick_clear_confirm(callback: CallbackQuery):
+    text = "<b>Внимание!</b> Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Да, очистить", callback_data="btn_quick_clear_yes"),
+            InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
+        ]
+    ])
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "btn_quick_clear_yes", IsModeratorFilter())
+async def cb_quick_clear_yes(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        stmt = update(ProcessedPost).where(
+            ProcessedPost.status.in_(['queued', 'accumulated'])
+        ).values(status='failed')
+        await session.execute(stmt)
+        await session.commit()
+        
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Очередь и корзина очищены!")
+
+
+@router.callback_query(F.data == "btn_quick_clear_no", IsModeratorFilter())
+async def cb_quick_clear_no(callback: CallbackQuery):
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Действие отменено")
+
+
+@router.callback_query(F.data == "btn_help", IsModeratorFilter())
+async def cb_help(callback: CallbackQuery):
+    help_text = (
+        "<b>Справка по командам бота-модератора</b>\n\n"
+        "<b>Команды в чате:</b>\n"
+        "• /status — статус очереди и интервалов\n"
+        "• /pause — поставить бота на паузу\n"
+        "• /resume — снять бота с паузы\n"
+        "• /mode auto | curation — сменить режим\n"
+        "• /interval [мин]-[макс] — изменить интервалы\n"
+        "• /best [время] — найти лучший пост (для curation)\n"
+        "• /clear — полностью очистить очередь\n\n"
+        "Вы также можете нажать <b>Статус</b>, чтобы вернуться к панели."
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Статус", callback_data="btn_status_refresh")
+        ]
+    ])
+    await callback.message.edit_text(help_text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "btn_quick_reset_interval", IsModeratorFilter())
+async def cb_quick_reset_interval(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, next_post_time=None)
+        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
+        result = await session.execute(stmt)
+        queued_ids = result.scalars().all()
+        
+    from arq import create_pool
+    from src.core.config import get_redis_settings
+    redis = await create_pool(get_redis_settings())
+    try:
+        for q_id in queued_ids:
+            await redis.enqueue_job('process_post_task', q_id)
+    finally:
+        await redis.close()
+
+    text, keyboard = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    
+    if queued_ids:
+        await callback.answer(f"Интервал сброшен! Запущено {len(queued_ids)} постов.")
+    else:
+        await callback.answer("Интервал сброшен!")
+
+
+@router.message(IsModeratorFilter())
+async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
+    if message.text and message.text.startswith('/'):
+        return
+
+    text = message.text or message.caption or ""
+    if not text.strip() and not message.photo and not message.video and not message.document:
+        await message.reply("Пожалуйста, отправьте текст или медиафайл для рерайта.")
+        return
+
+    media_type = None
+    file_id = None
+    if message.photo:
+        media_type = 'photo'
+        file_id = message.photo[-1].file_id
+    elif message.video:
+        media_type = 'video'
+        file_id = message.video.file_id
+    elif message.document:
+        media_type = 'document'
+        file_id = message.document.file_id
+
+    import os
+    os.makedirs('data/media', exist_ok=True)
+    media_path = None
+    temp_filename = f"manual_{int(datetime.now(timezone.utc).timestamp())}"
+
+    if file_id and media_type:
+        try:
+            file_info = await bot.get_file(file_id)
+            file_ext = os.path.splitext(file_info.file_path)[1]
+            new_filename = f"{temp_filename}{file_ext}"
+            media_path = os.path.join('data/media', new_filename)
+            logger.info(f"[Bot] Скачивание медиа для ручного поста: {media_path}...")
+            await bot.download_file(file_info.file_path, media_path)
+        except Exception as e:
+            logger.error(f"[Bot] Ошибка при скачивании медиа для ручного поста: {e}")
+            await message.reply("Не удалось скачать медиафайл. Попробуйте еще раз.")
+            return
+
+    import hashlib
+    post_hash = hashlib.md5(f"manual_{text}_{datetime.now(timezone.utc).timestamp()}".encode('utf-8')).hexdigest()
+
+    async with async_session_maker() as session:
+        post_id = await PostRepository.process_new_post(
+            session=session,
+            channel_id=0,
+            message_id=0,
+            post_hash=post_hash,
+            text=text,
+            media_path=media_path,
+            media_type=media_type,
+            source_link="Ручной пост",
+            status='queued'
+        )
+        await SettingsRepository.update_settings(session, next_post_time=None)
+
+    if not post_id:
+        await message.reply("Не удалось создать пост в базе данных.")
+        return
+
+    from arq import create_pool
+    from src.core.config import get_redis_settings
+    redis = await create_pool(get_redis_settings())
+    try:
+        await redis.enqueue_job('process_post_task', post_id)
+        await message.reply(f"Пост принят для ручной обработки (ID: {post_id}). Запускаю ИИ-рерайт...")
+    finally:
+        await redis.close()
