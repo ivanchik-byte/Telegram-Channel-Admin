@@ -60,7 +60,7 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     import httpx
                     try:
                         async with httpx.AsyncClient() as http_client:
-                            url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+                            url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
                             text = f"Ручной парсинг успешно завершен. Импортировано новых уникальных постов: {parsed_count}."
                             await http_client.post(url, json={
                                 "chat_id": settings.MODERATOR_CHAT_ID,
