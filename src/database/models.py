@@ -1,5 +1,5 @@
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import BigInteger, String, Text, DateTime, UniqueConstraint, CheckConstraint, func
+from sqlalchemy import Integer, BigInteger, String, Text, DateTime, UniqueConstraint, CheckConstraint, func
 from datetime import datetime
 
 class Base(DeclarativeBase):
