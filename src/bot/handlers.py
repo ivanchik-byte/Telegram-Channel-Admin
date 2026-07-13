@@ -1,7 +1,7 @@
 from html import escape
 import os
 from aiogram import Router, F, Bot
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command, BaseFilter, CommandObject
 from src.core.logger import logger
 from src.core.config import settings
@@ -29,7 +29,7 @@ class IsModeratorFilter(BaseFilter):
             return False
 
         is_admin = user_id in settings.ADMIN_IDS
-        is_right_chat = str(chat_id) == str(settings.MODERATOR_CHAT_ID)
+        is_right_chat = str(chat_id) == str(settings.MODERATOR_CHAT_ID) or str(chat_id) == str(user_id)
 
         if is_right_chat and not is_admin:
             if isinstance(event, CallbackQuery):
@@ -37,6 +37,27 @@ class IsModeratorFilter(BaseFilter):
             return False
 
         return is_admin and is_right_chat
+
+
+def get_main_reply_keyboard():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="Статус"),
+                KeyboardButton(text="Помощь")
+            ],
+            [
+                KeyboardButton(text="Пауза 8ч"),
+                KeyboardButton(text="Возобновить")
+            ],
+            [
+                KeyboardButton(text="Сбросить интервал"),
+                KeyboardButton(text="Очистить очередь")
+            ]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие..."
+    )
 
 
 def _parse_post_id(callback_data: str) -> int | None:
@@ -166,23 +187,10 @@ async def cmd_start(message: Message):
         )
         return
         
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Статус", callback_data="btn_status_refresh"),
-            InlineKeyboardButton(text="Помощь", callback_data="btn_help")
-        ],
-        [
-            InlineKeyboardButton(text="Пауза 8ч", callback_data="btn_quick_pause_8h"),
-            InlineKeyboardButton(text="Возобновить", callback_data="btn_quick_resume")
-        ],
-        [
-            InlineKeyboardButton(text="Сменить режим", callback_data="btn_quick_toggle_mode")
-        ]
-    ])
-    
+    keyboard = get_main_reply_keyboard()
     await message.reply(
         "<b>Привет! Я бот-модератор каналов.</b>\n\n"
-        "Вы можете управлять ботом с помощью кнопок ниже или отправить команду /help для полной справки.",
+        "Используйте кнопки меню внизу экрана для быстрого управления или отправьте команду /help для полной справки.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
@@ -287,23 +295,7 @@ async def get_status_data():
         lines.append(f"• <b>В корзине (curation):</b> <code>{accumulated_count}</code>")
         
         text = "\n".join(lines)
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Обновить", callback_data="btn_status_refresh"),
-                InlineKeyboardButton(text="Сменить режим", callback_data="btn_quick_toggle_mode")
-            ],
-            [
-                InlineKeyboardButton(text="Пауза 8ч", callback_data="btn_quick_pause_8h"),
-                InlineKeyboardButton(text="Возобновить", callback_data="btn_quick_resume")
-            ],
-            [
-                InlineKeyboardButton(text="Сбросить интервал", callback_data="btn_quick_reset_interval"),
-                InlineKeyboardButton(text="Очистить очередь", callback_data="btn_quick_clear_confirm")
-            ]
-        ])
-        
-        return text, keyboard
+        return text
 
 @router.message(Command("mode"), IsModeratorFilter())
 async def cmd_mode(message: Message, command: CommandObject):
@@ -414,8 +406,8 @@ async def cmd_resume(message: Message):
 
 @router.message(Command("status"), IsModeratorFilter())
 async def cmd_status(message: Message):
-    text, keyboard = await get_status_data()
-    await message.reply(text, reply_markup=keyboard, parse_mode="HTML")
+    text = await get_status_data()
+    await message.reply(text, parse_mode="HTML")
 
 
 @router.message(Command("clear"), IsModeratorFilter())
@@ -585,9 +577,9 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data == "btn_status_refresh", IsModeratorFilter())
 async def cb_status_refresh(callback: CallbackQuery):
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Статус обновлен")
@@ -600,9 +592,9 @@ async def cb_quick_toggle_mode(callback: CallbackQuery):
         new_mode = "curation" if settings.mode == "auto" else "auto"
         await SettingsRepository.update_settings(session, mode=new_mode)
         
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer(f"Режим изменен на {new_mode}!")
@@ -614,9 +606,9 @@ async def cb_quick_pause_8h(callback: CallbackQuery):
     async with async_session_maker() as session:
         await SettingsRepository.update_settings(session, pause_until=pause_until)
         
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Бот приостановлен на 8 часов")
@@ -627,9 +619,9 @@ async def cb_quick_resume(callback: CallbackQuery):
     async with async_session_maker() as session:
         await SettingsRepository.update_settings(session, pause_until=None)
         
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Бот возобновил работу!")
@@ -657,9 +649,9 @@ async def cb_quick_clear_yes(callback: CallbackQuery):
         await session.execute(stmt)
         await session.commit()
         
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Очередь и корзина очищены!")
@@ -667,9 +659,9 @@ async def cb_quick_clear_yes(callback: CallbackQuery):
 
 @router.callback_query(F.data == "btn_quick_clear_no", IsModeratorFilter())
 async def cb_quick_clear_no(callback: CallbackQuery):
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     await callback.answer("Действие отменено")
@@ -714,9 +706,9 @@ async def cb_quick_reset_interval(callback: CallbackQuery):
     finally:
         await redis.close()
 
-    text, keyboard = await get_status_data()
+    text = await get_status_data()
     try:
-        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     except Exception:
         pass
     
@@ -799,3 +791,61 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
         await message.reply(f"Пост принят для ручной обработки (ID: {post_id}). Запускаю ИИ-рерайт...")
     finally:
         await redis.close()
+
+# --- Reply Keyboard Button Handlers ---
+
+@router.message(F.text == "Статус", IsModeratorFilter())
+async def reply_status(message: Message):
+    await cmd_status(message)
+
+
+@router.message(F.text == "Помощь", IsModeratorFilter())
+async def reply_help(message: Message):
+    await cmd_help(message)
+
+
+@router.message(F.text == "Пауза 8ч", IsModeratorFilter())
+async def reply_pause_8h(message: Message):
+    pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, pause_until=pause_until)
+    await message.reply("Бот поставлен на паузу на 8 часов (до " + pause_until.strftime('%Y-%m-%d %H:%M:%S') + " UTC).")
+
+
+@router.message(F.text == "Возобновить", IsModeratorFilter())
+async def reply_resume(message: Message):
+    await cmd_resume(message)
+
+
+@router.message(F.text == "Сбросить интервал", IsModeratorFilter())
+async def reply_reset_interval(message: Message):
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, next_post_time=None)
+        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
+        result = await session.execute(stmt)
+        queued_ids = result.scalars().all()
+        
+    from arq import create_pool
+    from src.core.config import get_redis_settings
+    redis = await create_pool(get_redis_settings())
+    try:
+        for q_id in queued_ids:
+            await redis.enqueue_job('process_post_task', q_id)
+    finally:
+        await redis.close()
+        
+    if queued_ids:
+        await message.reply(f"Интервал сброшен! Запущено {len(queued_ids)} постов в обработку.")
+    else:
+        await message.reply("Интервал сброшен!")
+
+
+@router.message(F.text == "Очистить очередь", IsModeratorFilter())
+async def reply_clear_confirm(message: Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Да, очистить", callback_data="btn_quick_clear_yes"),
+            InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
+        ]
+    ])
+    await message.reply("Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?", reply_markup=keyboard)
