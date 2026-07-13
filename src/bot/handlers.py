@@ -52,8 +52,12 @@ def get_main_reply_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="Статус"),
-                KeyboardButton(text="Помощь")
+                KeyboardButton(text="Модерация"),
+                KeyboardButton(text="Статус")
+            ],
+            [
+                KeyboardButton(text="Парсить сейчас"),
+                KeyboardButton(text="Найти лучший пост")
             ],
             [
                 KeyboardButton(text="Пауза 8ч"),
@@ -61,11 +65,7 @@ def get_main_reply_keyboard():
             ],
             [
                 KeyboardButton(text="Сбросить интервал"),
-                KeyboardButton(text="Очистить очередь")
-            ],
-            [
-                KeyboardButton(text="Парсить сейчас"),
-                KeyboardButton(text="Найти лучший пост")
+                KeyboardButton(text="Очистить все")
             ]
         ],
         resize_keyboard=True,
@@ -445,36 +445,41 @@ async def cmd_status(message: Message):
 async def cmd_clear(message: Message):
     async with async_session_maker() as session:
         stmt = update(ProcessedPost).where(
-            ProcessedPost.status.in_(['queued', 'accumulated'])
+            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating', 'ai_processing'])
         ).values(status='failed')
         await session.execute(stmt)
         await session.commit()
-    await message.reply("<b>Очередь и корзина полностью очищены.</b>", parse_mode="HTML")
+    await message.reply("<b>Очередь публикации, модерация и кураторская корзина полностью очищены.</b>", parse_mode="HTML")
 
 
 @router.message(Command("help"), IsModeratorFilter())
 async def cmd_help(message: Message):
     help_text = (
         "<b>Справка по командам бота-модератора</b>\n\n"
+        "<b>Интерактивные кнопки меню:</b>\n"
+        "- Модерация — показать один старейший пост, ожидающий проверки.\n"
+        "- Парсить сейчас — принудительно загрузить последние 10 сообщений из каналов.\n"
+        "- Найти лучший пост — загрузить посты, сбросить интервал и выбрать ТОП-6 (1 на модерацию, 5 в очередь).\n"
+        "- Статус — настройки, режим работы, текущая очередь и задержки.\n"
+        "- Возобновить / Пауза 8ч / Сбросить интервал / Очистить queue.\n\n"
         "<b>Управление режимами:</b>\n"
-        "• /mode auto — автоматический режим (1 пост на модерации, до 5 в очереди).\n"
-        "• /mode curation — режим кураторства (посты собираются в корзину).\n\n"
+        "- /mode auto — автоматический режим (1 пост на модерации, остальные в очереди).\n"
+        "- /mode curation — режим кураторства (все посты собираются в корзину без рерайта).\n\n"
         "<b>Управление интервалами:</b>\n"
-        "• /interval [мин]-[макс] — случайная задержка. Поддерживает суффиксы: <code>s</code> (сек), <code>m</code> (мин), <code>h</code> (ч), <code>d</code> (д).\n"
-        "  <i>Пример: /interval 20m-50m или /interval 30s-1h</i>\n"
-        "• /interval [время] — фиксированная задержка.\n"
-        "  <i>Пример: /interval 30s</i>\n"
-        "• /interval 0 — отключить задержку.\n\n"
+        "- /interval [мин]-[макс] — случайная задержка. Поддерживает суффиксы: s (сек), m (мин), h (ч), d (д).\n"
+        "  Пример: /interval 20m-50m или /interval 30s-1h\n"
+        "- /interval [время] — фиксированная задержка. Пример: /interval 30s\n"
+        "- /interval 0 — отключить задержку.\n\n"
         "<b>Пауза и возобновление:</b>\n"
-        "• /pause — поставить бота на вечную паузу.\n"
-        "• /pause [время] — поставить на паузу на указанное время.\n"
-        "  <i>Пример: /pause 8h (на 8 часов) или /pause 30s (на 30 секунд)</i>\n"
-        "• /resume — возобновить работу бота (снять паузу).\n\n"
+        "- /pause — поставить бота на вечную паузу.\n"
+        "- /pause [время] — поставить на паузу на указанное время. Пример: /pause 8h\n"
+        "- /resume — возобновить работу бота (снять паузу).\n\n"
         "<b>Другие команды:</b>\n"
-        "• /status — посмотреть настройки, режим и статистику очереди.\n"
-        "• /best [время] — найти лучший пост в корзине за указанный период (для curation).\n"
-        "  <i>Пример: /best 24h или /best 12h</i>\n"
-        "• /clear — полностью очистить очередь и корзину.\n"
+        "- /status — посмотреть настройки, режим и статистику.\n"
+        "- /best [время] — принудительно запустить парсер и выбрать ТОП-6 лучших постов за период (по умолчанию 24h).\n"
+        "  Пример: /best 24h или /best 12h\n"
+        "- /parse — принудительно загрузить последние 10 сообщений из каждого канала.\n"
+        "- /clear — полностью очистить очередь публикации и корзину.\n"
     )
     await message.reply(help_text, parse_mode="HTML")
 
@@ -623,7 +628,7 @@ async def reply_reset_interval(message: Message):
         await message.reply("Интервал сброшен!")
 
 
-@router.message(F.text == "Очистить очередь", IsModeratorFilter())
+@router.message(F.text.in_({"Очистить очередь", "Очистить все"}), IsModeratorFilter())
 async def reply_clear_confirm(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -631,7 +636,23 @@ async def reply_clear_confirm(message: Message):
             InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
         ]
     ])
-    await message.reply("Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?", reply_markup=keyboard)
+    await message.reply("Вы действительно хотите полностью очистить очередь публикации, модерацию и кураторскую корзину?", reply_markup=keyboard)
+
+@router.callback_query(F.data == "btn_quick_clear_yes", IsModeratorFilter())
+async def cb_quick_clear_yes(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        stmt = update(ProcessedPost).where(
+            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating', 'ai_processing'])
+        ).values(status='failed')
+        await session.execute(stmt)
+        await session.commit()
+    await callback.message.edit_text("<b>Очередь публикации, модерация и кураторская корзина полностью очищены.</b>", parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "btn_quick_clear_no", IsModeratorFilter())
+async def cb_quick_clear_no(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Очистка отменена")
 
 @router.message(IsModeratorFilter())
 async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
