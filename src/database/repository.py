@@ -114,15 +114,15 @@ class PostRepository:
         """Returns tuple: (moderating_count, queued_count)"""
         from sqlalchemy import func
         stmt = select(ProcessedPost.status, func.count(ProcessedPost.id)).where(
-            ProcessedPost.status.in_(['moderating', 'queued'])
+            ProcessedPost.status.in_(['moderating', 'queued', 'ai_processing'])
         ).group_by(ProcessedPost.status)
         
         result = await session.execute(stmt)
-        counts = {'moderating': 0, 'queued': 0}
+        counts = {'moderating': 0, 'queued': 0, 'ai_processing': 0}
         for row in result.all():
             counts[row[0]] = row[1]
             
-        return counts['moderating'], counts['queued']
+        return counts['moderating'] + counts['ai_processing'], counts['queued']
 
 
 from src.database.models import BotSettings
