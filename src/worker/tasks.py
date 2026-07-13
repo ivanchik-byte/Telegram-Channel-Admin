@@ -287,10 +287,10 @@ async def process_post_task(ctx, post_id: int):
         async with async_session_maker() as session:
             settings = await SettingsRepository.get_settings(session)
             if settings.interval_min > 0 or settings.interval_max > 0:
-                delay_minutes = random.randint(settings.interval_min, max(settings.interval_min, settings.interval_max))
-                next_time = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+                delay_seconds = random.randint(settings.interval_min, max(settings.interval_min, settings.interval_max))
+                next_time = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
                 await SettingsRepository.update_settings(session, next_post_time=next_time)
-                logger.info(f"[Worker] Следующий пост будет отправлен не раньше чем через {delay_minutes} минут.")
+                logger.info(f"[Worker] Следующий пост будет отправлен не раньше чем через {delay_seconds} секунд.")
 
 
 async def find_best_post_task(ctx, hours: int):

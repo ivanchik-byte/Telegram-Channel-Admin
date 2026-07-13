@@ -272,8 +272,8 @@ async def cmd_interval(message: Message, command: CommandObject):
         if not min_delta or not max_delta:
             raise ValueError()
             
-        interval_min = int(min_delta.total_seconds() / 60)
-        interval_max = int(max_delta.total_seconds() / 60)
+        interval_min = int(min_delta.total_seconds())
+        interval_max = int(max_delta.total_seconds())
         
         if interval_min > interval_max:
             interval_min, interval_max = interval_max, interval_min
@@ -281,9 +281,9 @@ async def cmd_interval(message: Message, command: CommandObject):
         async with async_session_maker() as session:
             await SettingsRepository.update_settings(session, interval_min=interval_min, interval_max=interval_max)
             
-        await message.reply(f"Интервал выдачи постов установлен: от {interval_min} до {interval_max} минут.")
+        await message.reply(f"Интервал выдачи постов установлен: от {interval_min} до {interval_max} секунд.")
     except Exception:
-        await message.reply("Неверный формат. Пример: /interval 20m-50m")
+        await message.reply("Неверный формат. Пример: /interval 20m-50m или /interval 30-60")
 
 
 @router.message(Command("pause"), IsModeratorFilter())
@@ -329,7 +329,7 @@ async def cmd_status(message: Message):
         
         lines = [
             f"<b>Режим:</b> {settings.mode}",
-            f"<b>Интервал:</b> {settings.interval_min}-{settings.interval_max} мин.",
+            f"<b>Интервал:</b> {settings.interval_min}-{settings.interval_max} сек.",
         ]
         
         now = datetime.now(timezone.utc)
@@ -339,8 +339,11 @@ async def cmd_status(message: Message):
             lines.append("<b>Пауза:</b> Нет")
             
         if settings.next_post_time and settings.next_post_time > now:
-            delay = int((settings.next_post_time - now).total_seconds() / 60)
-            lines.append(f"<b>След. пост через:</b> ~{delay} мин")
+            delay_sec = int((settings.next_post_time - now).total_seconds())
+            if delay_sec > 120:
+                lines.append(f"<b>След. пост через:</b> ~{delay_sec // 60} мин")
+            else:
+                lines.append(f"<b>След. пост через:</b> ~{delay_sec} сек")
             
         lines.append("")
         lines.append(f"<b>На модерации:</b> {mod_count} / 1")
