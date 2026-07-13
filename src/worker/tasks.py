@@ -315,7 +315,7 @@ async def find_best_post_task(ctx, hours: int):
     async with async_session_maker() as session:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         stmt = select(ProcessedPost).where(
-            ProcessedPost.status == 'accumulated',
+            ProcessedPost.status.in_(['accumulated', 'queued']),
             ProcessedPost.created_at >= since
         )
         result = await session.execute(stmt)

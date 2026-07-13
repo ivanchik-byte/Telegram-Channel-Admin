@@ -441,6 +441,9 @@ async def cmd_best(message: Message, command: CommandObject):
     from arq import create_pool
     from arq.connections import RedisSettings
     
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, next_post_time=None)
+        
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
         await redis.enqueue_job('find_best_post_task', hours)
