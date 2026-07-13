@@ -19,8 +19,22 @@ async def check_force_parse(client: TelegramClient, channels: list):
                 val = await redis.get('force_parse')
                 if val:
                     await redis.delete('force_parse')
-                    limit = int(val.decode('utf-8')) if val.isdigit() else 10
-                    logger.info(f"Manual parsing triggered! Fetching last {limit} messages from channels.")
+                    val_str = val.decode('utf-8')
+                    limit = 5
+                    num_channels = 0
+                    if ':' in val_str:
+                        parts = val_str.split(':')
+                        limit = int(parts[0]) if parts[0].isdigit() else 5
+                        num_channels = int(parts[1]) if parts[1].isdigit() else 0
+                    else:
+                        limit = int(val_str) if val_str.isdigit() else 5
+                    
+                    logger.info(f"Manual parsing triggered! Fetching last {limit} messages from channels (num_channels={num_channels}).")
+                    
+                    target_channels = channels
+                    if num_channels > 0 and num_channels < len(channels):
+                        import random
+                        target_channels = random.sample(channels, num_channels)
                     
                     class DummyEvent:
                         def __init__(self, msg, c):
@@ -31,7 +45,7 @@ async def check_force_parse(client: TelegramClient, channels: list):
                             self.client = c
 
                     parsed_count = 0
-                    for channel in channels:
+                    for channel in target_channels:
                         try:
                             logger.info(f"Fetching from {channel}...")
                             async for msg in client.iter_messages(channel, limit=limit):

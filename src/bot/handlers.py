@@ -624,13 +624,21 @@ async def cmd_parse(message: Message, command: CommandObject):
     from arq import create_pool
     
     limit = '5'
-    if command.args and command.args.isdigit():
-        limit = command.args
+    num_channels = '0'
+    if command.args:
+        parts = command.args.split()
+        if len(parts) >= 1 and parts[0].isdigit():
+            limit = parts[0]
+        if len(parts) >= 2 and parts[1].isdigit():
+            num_channels = parts[1]
         
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
-        await redis.set('force_parse', limit)
-        await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из каждого канала...")
+        await redis.set('force_parse', f"{limit}:{num_channels}")
+        if num_channels != '0':
+            await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из {num_channels} случайных каналов...")
+        else:
+            await message.reply(f"Сигнал на ручной парсинг отправлен. Парсер загружает последние {limit} сообщений из всех каналов...")
     except Exception as e:
         await message.reply(f"Ошибка при отправке сигнала парсеру: {e}")
     finally:
@@ -639,7 +647,7 @@ async def cmd_parse(message: Message, command: CommandObject):
 @router.message(F.text == "Парсить сейчас", IsModeratorFilter())
 async def reply_parse_now(message: Message):
     class DummyCommand:
-        args = "5"
+        args = "5 3"
     await cmd_parse(message, DummyCommand())
 
 @router.message(F.text == "Найти лучший пост", IsModeratorFilter())
