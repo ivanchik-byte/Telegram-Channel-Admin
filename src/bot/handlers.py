@@ -53,6 +53,10 @@ def get_main_reply_keyboard():
             [
                 KeyboardButton(text="Сбросить интервал"),
                 KeyboardButton(text="Очистить очередь")
+            ],
+            [
+                KeyboardButton(text="Парсить сейчас"),
+                KeyboardButton(text="Найти лучший пост")
             ]
         ],
         resize_keyboard=True,
@@ -325,9 +329,9 @@ async def cmd_best(message: Message, command: CommandObject):
             return
 
     from arq import create_pool
-    from src.core.config import get_redis_settings
+    from arq.connections import RedisSettings
     
-    redis = await create_pool(get_redis_settings())
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
         await redis.enqueue_job('find_best_post_task', hours)
         await message.reply(f"Запущен поиск лучшего поста за последние {hours} часов. Ожидайте...")
@@ -719,6 +723,36 @@ async def cb_quick_reset_interval(callback: CallbackQuery):
 
 
 # --- Reply Keyboard Button Handlers ---
+
+@router.message(Command('parse'), IsModeratorFilter())
+async def cmd_parse(message: Message):
+    from arq.connections import RedisSettings
+    from arq import create_pool
+    
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+    try:
+        await redis.set('force_parse', '10')
+        await message.reply("Сигнал на ручной парсинг отправлен. Парсер загружает последние 10 сообщений из каждого канала...")
+    except Exception as e:
+        await message.reply(f"Ошибка при отправке сигнала парсеру: {e}")
+    finally:
+        await redis.close()
+
+@router.message(F.text == "Парсить сейчас", IsModeratorFilter())
+async def reply_parse_now(message: Message):
+    await cmd_parse(message)
+
+@router.message(F.text == "Найти лучший пост", IsModeratorFilter())
+async def reply_find_best(message: Message):
+    from arq import create_pool
+    from arq.connections import RedisSettings
+    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+    try:
+        await redis.enqueue_job('find_best_post_task', 24)
+        await message.reply("Запущен поиск лучшего поста за последние 24 часов. Ожидайте...")
+    finally:
+        await redis.close()
+
 
 @router.message(F.text == "Статус", IsModeratorFilter())
 async def reply_status(message: Message):

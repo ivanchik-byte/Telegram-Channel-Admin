@@ -10,6 +10,40 @@ from arq.connections import RedisSettings
 
 SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'anon')
 
+async def check_force_parse(client: TelegramClient, channels: list):
+    try:
+        redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+        logger.info("Started background task to check for force_parse requests...")
+        while True:
+            try:
+                val = await redis.get('force_parse')
+                if val:
+                    await redis.delete('force_parse')
+                    limit = int(val.decode('utf-8')) if val.isdigit() else 10
+                    logger.info(f"Manual parsing triggered! Fetching last {limit} messages from channels.")
+                    
+                    class DummyEvent:
+                        def __init__(self, msg, c):
+                            self.message = msg
+                            self.chat_id = msg.chat_id
+                            self.id = msg.id
+                            self.chat = msg.chat
+                            self.client = c
+
+                    for channel in channels:
+                        try:
+                            logger.info(f"Fetching from {channel}...")
+                            async for msg in client.iter_messages(channel, limit=limit):
+                                if msg.message:
+                                    await new_message_handler(DummyEvent(msg, client))
+                        except Exception as e:
+                            logger.error(f"Error parsing channel {channel}: {e}")
+            except Exception as e:
+                logger.error(f"Error checking force_parse: {e}")
+            await asyncio.sleep(5)
+    except Exception as e:
+        logger.error(f"Fatal error in check_force_parse: {e}")
+
 async def main():
     if not os.path.exists(f"{SESSION_FILE}.session"):
         logger.error(f"Session file not found at {SESSION_FILE}.session. Please run login.py first.")
@@ -35,6 +69,8 @@ async def main():
     logger.info("Starting Telegram parser client...")
     await client.start()
     logger.info(f"Parser is running and tracking channels: {channels}")
+    
+    client.loop.create_task(check_force_parse(client, channels))
     
     try:
         await client.run_until_disconnected()
