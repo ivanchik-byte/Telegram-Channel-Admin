@@ -160,23 +160,41 @@ async def process_reject(callback: CallbackQuery):
         logger.info(f"[Bot] Пост {post_id} отклонен.")
 
 @router.callback_query(F.data.startswith("edit_"), IsModeratorFilter())
-async def process_edit(callback: CallbackQuery):
+async def process_edit(callback: CallbackQuery, state: FSMContext):
     post_id = _parse_post_id(callback.data)
     if post_id is None:
-        await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+        await callback.answer("Ошибка ID", show_alert=True)
         return
 
     async with async_session_maker() as session:
         post = await PostRepository.get_post_by_id(session, post_id)
         if not post or post.status != 'moderating':
-            await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+            await callback.answer("Пост уже обработан", show_alert=True)
             return
 
-        instruction = i18n.get('msg_edit_instruction', post_id=post_id)
-        await callback.message.answer(instruction, parse_mode="HTML")
-        # Plain text — no parse_mode, safe without escaping
-        await callback.message.answer((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
-        await callback.answer()
+    await state.set_state(TextReplacement.waiting_for_text)
+    await state.update_data(post_id=post_id)
+    await callback.message.delete()
+    await callback.message.answer(f"Пришлите новый текст для поста {post_id}:")
+    await callback.message.answer((post.rewritten_text or "")[:4000])
+
+@router.message(TextReplacement.waiting_for_text, IsModeratorFilter())
+async def receive_new_text(message: Message, state: FSMContext, bot: Bot):
+    data = await state.get_data()
+    post_id = data.get('post_id')
+    if not post_id or not message.text:
+        await message.reply("Текст не получен или ID потерян. Отмена.")
+        await state.clear()
+        return
+
+    async with async_session_maker() as session:
+        post = await PostRepository.atomic_edit_text(session, post_id, 'moderating', message.text)
+        if post:
+            await send_mod_card_to_chat(bot, message.chat.id, post)
+        else:
+            await message.reply("Пост уже обработан или не найден.")
+            
+    await state.clear()
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
@@ -455,6 +473,9 @@ async def cmd_help(message: Message):
 class MediaReplacement(StatesGroup):
     waiting_for_media = State()
 
+class TextReplacement(StatesGroup):
+    waiting_for_text = State()
+
 
 @router.callback_query(F.data.startswith("change_media_"), IsModeratorFilter())
 async def process_change_media(callback: CallbackQuery, state: FSMContext):
@@ -469,6 +490,9 @@ async def process_change_media(callback: CallbackQuery, state: FSMContext):
             await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
             return
 
+    await state.update_data(post_id=post_id)
+    await callback.message.delete()
+    await callback.message.answer(f'Пришлите новое медиа (фото/видео/файл) для поста {post_id}:')
     await state.set_state(MediaReplacement.waiting_for_media)
     await state.update_data(post_id=post_id)
     await callback.message.reply(
@@ -481,14 +505,10 @@ async def process_change_media(callback: CallbackQuery, state: FSMContext):
 @router.message(MediaReplacement.waiting_for_media, IsModeratorFilter())
 async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    post_id = data.get("post_id")
-    if not post_id:
-        await state.clear()
-        return
-
+    post_id = data.get('post_id')
+    
     media_type = None
     file_id = None
-
     if message.photo:
         media_type = 'photo'
         file_id = message.photo[-1].file_id
@@ -498,229 +518,34 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
     elif message.document:
         media_type = 'document'
         file_id = message.document.file_id
-    else:
-        if message.text and message.text.strip() == "/cancel":
-            await state.clear()
-            await message.reply("Замена медиа отменена.")
-            return
-        await message.reply("Пожалуйста, отправьте фото, видео или документ. Для отмены отправьте /cancel.")
+        
+    if not media_type:
+        await message.reply("Пожалуйста, отправьте медиа (фото/видео/документ).")
         return
-
-    await state.clear()
-
+        
     import os
     os.makedirs('data/media', exist_ok=True)
-
+    temp_filename = f"media_{post_id}_{int(message.date.timestamp())}"
+    
     try:
         file_info = await bot.get_file(file_id)
         file_ext = os.path.splitext(file_info.file_path)[1]
-        new_filename = f"media_{post_id}_{int(datetime.now(timezone.utc).timestamp())}{file_ext}"
-        new_path = os.path.join('data/media', new_filename)
-
-        logger.info(f"[Bot] Скачивание нового медиа для поста {post_id}: {new_path}...")
-        await bot.download_file(file_info.file_path, new_path)
+        new_filename = f"{temp_filename}{file_ext}"
+        media_path = os.path.join('data/media', new_filename)
+        await bot.download_file(file_info.file_path, media_path)
     except Exception as e:
-        logger.error(f"[Bot] Ошибка при скачивании нового медиа: {e}")
-        await message.reply("Не удалось скачать файл. Попробуйте ещё раз.")
+        await message.reply(f"Не удалось сохранить медиа: {e}")
+        await state.clear()
         return
 
     async with async_session_maker() as session:
-        post_before = await PostRepository.get_post_by_id(session, post_id)
-        if not post_before or post_before.status != 'moderating':
-            if os.path.exists(new_path):
-                os.remove(new_path)
-            await message.reply("Срок действия этого поста истек или он уже обработан.")
-            return
-
-        old_path = post_before.media_path
-
-        post = await PostRepository.atomic_update_media(session, post_id, 'moderating', new_path, media_type)
-        if not post:
-            if os.path.exists(new_path):
-                os.remove(new_path)
-            await message.reply("Срок действия этого поста истек или он уже обработан.")
-            return
-
-        # Delete old file
-        if old_path and os.path.exists(old_path):
-            try:
-                os.remove(old_path)
-                logger.info(f"[Bot] Старый файл {old_path} удален при замене медиа.")
-            except Exception as e:
-                logger.error(f"[Bot] Не удалось удалить старый файл {old_path}: {e}")
-
-        display_text = escape(post.rewritten_text[:TG_SAFE_MESSAGE_LIMIT])
-        text_to_send = f"{i18n.get('card_edited_post', channel_id=post.source_channel_id)}\n\n{display_text}"
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
-                InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
-            ],
-            [
-                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
-                InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
-            ]
-        ])
-
-        media_file = FSInputFile(new_path)
-        if media_type == 'photo':
-            await message.answer_photo(photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-        elif media_type == 'video':
-            await message.answer_video(video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+        post = await PostRepository.atomic_update_media(session, post_id, 'moderating', media_path, media_type)
+        if post:
+            await send_mod_card_to_chat(bot, message.chat.id, post)
         else:
-            await message.answer_document(document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-
-        # Send source link as next message if available
-        if post.source_link:
-            await message.answer(f"Источник: {post.source_link}")
-
-        await message.reply("Медиафайл успешно заменен! Новая карточка отправлена.")
-
-# --- Quick Status Board Callback Handlers ---
-
-@router.callback_query(F.data == "btn_status_refresh", IsModeratorFilter())
-async def cb_status_refresh(callback: CallbackQuery):
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer("Статус обновлен")
-
-
-@router.callback_query(F.data == "btn_quick_toggle_mode", IsModeratorFilter())
-async def cb_quick_toggle_mode(callback: CallbackQuery):
-    async with async_session_maker() as session:
-        settings = await SettingsRepository.get_settings(session)
-        new_mode = "curation" if settings.mode == "auto" else "auto"
-        await SettingsRepository.update_settings(session, mode=new_mode)
-        
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer(f"Режим изменен на {new_mode}!")
-
-
-@router.callback_query(F.data == "btn_quick_pause_8h", IsModeratorFilter())
-async def cb_quick_pause_8h(callback: CallbackQuery):
-    pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, pause_until=pause_until)
-        
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer("Бот приостановлен на 8 часов")
-
-
-@router.callback_query(F.data == "btn_quick_resume", IsModeratorFilter())
-async def cb_quick_resume(callback: CallbackQuery):
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, pause_until=None)
-        
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer("Бот возобновил работу!")
-
-
-@router.callback_query(F.data == "btn_quick_clear_confirm", IsModeratorFilter())
-async def cb_quick_clear_confirm(callback: CallbackQuery):
-    text = "<b>Внимание!</b> Вы действительно хотите полностью очистить очередь публикации и кураторскую корзину?"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Да, очистить", callback_data="btn_quick_clear_yes"),
-            InlineKeyboardButton(text="Отмена", callback_data="btn_quick_clear_no")
-        ]
-    ])
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "btn_quick_clear_yes", IsModeratorFilter())
-async def cb_quick_clear_yes(callback: CallbackQuery):
-    async with async_session_maker() as session:
-        stmt = update(ProcessedPost).where(
-            ProcessedPost.status.in_(['queued', 'accumulated'])
-        ).values(status='failed')
-        await session.execute(stmt)
-        await session.commit()
-        
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer("Очередь и корзина очищены!")
-
-
-@router.callback_query(F.data == "btn_quick_clear_no", IsModeratorFilter())
-async def cb_quick_clear_no(callback: CallbackQuery):
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    await callback.answer("Действие отменено")
-
-
-@router.callback_query(F.data == "btn_help", IsModeratorFilter())
-async def cb_help(callback: CallbackQuery):
-    help_text = (
-        "<b>Справка по командам бота-модератора</b>\n\n"
-        "<b>Команды в чате:</b>\n"
-        "• /status — статус очереди и интервалов\n"
-        "• /pause — поставить бота на паузу\n"
-        "• /resume — снять бота с паузы\n"
-        "• /mode auto | curation — сменить режим\n"
-        "• /interval [мин]-[макс] — изменить интервалы\n"
-        "• /best [время] — найти лучший пост (для curation)\n"
-        "• /clear — полностью очистить очередь\n\n"
-        "Вы также можете нажать <b>Статус</b>, чтобы вернуться к панели."
-    )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Статус", callback_data="btn_status_refresh")
-        ]
-    ])
-    await callback.message.edit_text(help_text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-@router.callback_query(F.data == "btn_quick_reset_interval", IsModeratorFilter())
-async def cb_quick_reset_interval(callback: CallbackQuery):
-    async with async_session_maker() as session:
-        await SettingsRepository.update_settings(session, next_post_time=None)
-        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'queued')
-        result = await session.execute(stmt)
-        queued_ids = result.scalars().all()
-        
-    from arq import create_pool
-    from arq.connections import RedisSettings
-    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
-    try:
-        for q_id in queued_ids:
-            await redis.enqueue_job('process_post_task', q_id)
-    finally:
-        await redis.close()
-
-    text = await get_status_data()
-    try:
-        await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except Exception:
-        pass
-    
-    if queued_ids:
-        await callback.answer(f"Интервал сброшен! Запущено {len(queued_ids)} постов.")
-    else:
-        await callback.answer("Интервал сброшен!")
-
+            await message.reply("Пост уже обработан или не найден.")
+            
+    await state.clear()
 
 # --- Reply Keyboard Button Handlers ---
 
@@ -744,15 +569,9 @@ async def reply_parse_now(message: Message):
 
 @router.message(F.text == "Найти лучший пост", IsModeratorFilter())
 async def reply_find_best(message: Message):
-    from arq import create_pool
-    from arq.connections import RedisSettings
-    redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
-    try:
-        await redis.enqueue_job('find_best_post_task', 24)
-        await message.reply("Запущен поиск лучшего поста за последние 24 часов. Ожидайте...")
-    finally:
-        await redis.close()
-
+    class DummyCommand:
+        args = None
+    await cmd_best(message, DummyCommand())
 
 @router.message(F.text == "Статус", IsModeratorFilter())
 async def reply_status(message: Message):
