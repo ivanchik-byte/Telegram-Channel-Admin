@@ -39,7 +39,7 @@ class IsModeratorFilter(BaseFilter):
             return False
 
         is_admin = user_id in settings.ADMIN_IDS
-        is_right_chat = str(chat_id) == str(settings.MODERATOR_CHAT_ID) or str(chat_id) == str(user_id)
+        is_right_chat = str(chat_id) == str(settings.effective_moderator_chat_id) or str(chat_id) == str(user_id)
 
         if is_right_chat and not is_admin:
             if isinstance(event, CallbackQuery):
@@ -132,8 +132,9 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
                 await bot.send_message(chat_id=settings.TARGET_CHANNEL_ID, text=text_to_publish, parse_mode=None)
 
             # Edit moderator message — escape user content before embedding in HTML
+            action_by = callback.from_user.username or callback.from_user.full_name
             display_text = escape(text_to_publish[:TG_SAFE_MESSAGE_LIMIT])
-            new_text = f"{i18n.get('msg_published')}\n\n{display_text}"
+            new_text = f"{i18n.get('msg_published')}\n👤 Действие от: {action_by}\n\n{display_text}"
             
             if callback.message.photo or callback.message.video or callback.message.document:
                 await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
@@ -162,8 +163,9 @@ async def process_reject(callback: CallbackQuery):
             await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
             return
 
+        action_by = callback.from_user.username or callback.from_user.full_name
         display_text = escape((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
-        new_text = f"{i18n.get('msg_rejected')}\n\n{display_text}"
+        new_text = f"{i18n.get('msg_rejected')}\n👤 Действие от: {action_by}\n\n{display_text}"
         
         if callback.message.photo or callback.message.video or callback.message.document:
             await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
@@ -213,7 +215,7 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
             await bot.send_message(chat_id=chat_id, text=text_to_send, reply_markup=keyboard, parse_mode="HTML")
         except Exception as e:
             if "group chat was upgraded to a supergroup chat" in str(e):
-                logger.error(f"[Bot] MODERATOR_CHAT_ID is outdated due to supergroup migration. Please update .env!")
+                logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
             raise
 
     if post.source_link:
