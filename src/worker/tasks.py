@@ -107,7 +107,10 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
             )
     except Exception as e:
         # Статус не меняем: пост в 'moderating' с rewritten_text, можно восстановить.
-        logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
+        if "group chat was upgraded to a supergroup chat" in str(e):
+            logger.error(f"[Worker] ОШИБКА: Группа модерации стала супергруппой. ОБНОВИТЕ MODERATOR_CHAT_ID в файле .env! Пост {post_id} сохранен, но не отправлен в чат.")
+        else:
+            logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
 
 
 async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> str | None:
