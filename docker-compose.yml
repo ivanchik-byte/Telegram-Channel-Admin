@@ -76,6 +76,8 @@ services:
     working_dir: /app
     env_file:
       - .env
+    volumes:
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy

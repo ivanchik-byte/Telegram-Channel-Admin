@@ -4,7 +4,7 @@ import hashlib
 from datetime import timedelta
 
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.enums import ParseMode
 from html import escape
 
@@ -32,7 +32,7 @@ def contains_ad(text: str) -> bool:
     return False
 
 
-async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str):
+async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None):
     """
     Отправляет карточку модерации в MODERATOR_CHAT_ID.
     Статус поста уже выставлен в 'moderating' вызывающим кодом до вызова этой функции.
@@ -55,13 +55,46 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
 
     try:
         bot = ctx['bot']
+        if media_path and media_type:
+            try:
+                media_file = FSInputFile(media_path)
+                if media_type == 'photo':
+                    await bot.send_photo(
+                        chat_id=settings.MODERATOR_CHAT_ID,
+                        photo=media_file,
+                        caption=text_to_send,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                elif media_type == 'video':
+                    await bot.send_video(
+                        chat_id=settings.MODERATOR_CHAT_ID,
+                        video=media_file,
+                        caption=text_to_send,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    await bot.send_document(
+                        chat_id=settings.MODERATOR_CHAT_ID,
+                        document=media_file,
+                        caption=text_to_send,
+                        reply_markup=keyboard,
+                        parse_mode=ParseMode.HTML
+                    )
+                logger.info(f"[Worker] Пост {post_id} с медиа отправлен на модерацию.")
+                return
+            except Exception as e:
+                logger.error(f"[Worker] Ошибка отправки медиа для поста {post_id}: {e}. Отправляем как текст.")
+                # Fallback to text if media sending fails
+                
         await bot.send_message(
             chat_id=settings.MODERATOR_CHAT_ID,
             text=text_to_send,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
-        logger.info(f"[Worker] Пост {post_id} отправлен на модерацию.")
+        logger.info(f"[Worker] Пост {post_id} отправлен на модерацию (текст).")
     except Exception as e:
         # Статус не меняем: пост в 'moderating' с rewritten_text, можно восстановить.
         logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
@@ -109,6 +142,21 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> s
 
 async def process_post_task(ctx, post_id: int):
     logger.info(f"[Worker] Получена задача на обработку поста с ID: {post_id}")
+    
+    from src.database.repository import SettingsRepository
+    from datetime import datetime, timezone
+    import random
+    
+    async with async_session_maker() as session:
+        settings = await SettingsRepository.get_settings(session)
+        now = datetime.now(timezone.utc)
+        if settings.next_post_time and settings.next_post_time > now:
+            delay = (settings.next_post_time - now).total_seconds()
+            jitter = random.uniform(1.0, 5.0)
+            defer_sec = delay + jitter
+            logger.info(f"[Worker] Интервал не прошел. Откладываем пост {post_id} на {defer_sec:.1f} сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=defer_sec))
+            return
 
     # --- Шаг 1: Читаем данные, дедупликация, начальная фильтрация — закрываем сессию ---
     # Сессия НЕ держится открытой во время AI-запроса (backoff до ~62 сек).
@@ -128,6 +176,8 @@ async def process_post_task(ctx, post_id: int):
 
         post_text = post.text
         post_source_channel_id = post.source_channel_id
+        post_media_path = post.media_path
+        post_media_type = post.media_type
 
         # Дедупликация: ищем ранее добавленный пост с тем же хэшем
         duplicate_check_stmt = select(ProcessedPost).where(
@@ -203,7 +253,7 @@ async def process_post_task(ctx, post_id: int):
     # Сессия закрыта — теперь безопасно делать долгие сетевые вызовы
 
     if is_duplicate_ready:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text)
+        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text, post_media_path, post_media_type)
         return
 
     # --- Шаг 2: AI-рерайт — БД-сессия закрыта ---
@@ -228,4 +278,77 @@ async def process_post_task(ctx, post_id: int):
             logger.error(f"[Worker] Пост {post_id} переведен в статус failed.")
 
     if rewritten_text:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text)
+        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type)
+        
+        # Обновляем next_post_time после успешной отправки
+        from src.database.repository import SettingsRepository
+        from datetime import datetime, timezone
+        import random
+        async with async_session_maker() as session:
+            settings = await SettingsRepository.get_settings(session)
+            if settings.interval_min > 0 or settings.interval_max > 0:
+                delay_minutes = random.randint(settings.interval_min, max(settings.interval_min, settings.interval_max))
+                next_time = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+                await SettingsRepository.update_settings(session, next_post_time=next_time)
+                logger.info(f"[Worker] Следующий пост будет отправлен не раньше чем через {delay_minutes} минут.")
+
+
+async def find_best_post_task(ctx, hours: int):
+    logger.info(f"[Worker] Поиск лучшего поста за последние {hours} часов...")
+    from src.database.repository import SettingsRepository
+    from datetime import datetime, timezone
+    
+    async with async_session_maker() as session:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        stmt = select(ProcessedPost).where(
+            ProcessedPost.status == 'accumulated',
+            ProcessedPost.created_at >= since
+        )
+        result = await session.execute(stmt)
+        posts = result.scalars().all()
+        
+        if not posts:
+            logger.info("[Worker] Нет постов для выбора.")
+            bot = ctx['bot']
+            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Нет накопленных постов за последние {hours}ч.")
+            return
+
+        post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
+        
+    prompt = "Ниже список постов. Выбери ОДИН самый интересный, виральный и полезный пост. Верни ТОЛЬКО его числовой ID, без лишних слов и символов.\n\n" + str(post_data)
+    
+    client: AsyncOpenAI = ctx['ai_client']
+    try:
+        response = await client.chat.completions.create(
+            model=settings.AI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            extra_body=settings.AI_EXTRA_BODY or {}
+        )
+        best_id_str = response.choices[0].message.content.strip()
+        # Ищем число в ответе (иногда ИИ может написать "ID: 123")
+        import re
+        match = re.search(r'\d+', best_id_str)
+        if match:
+            best_id = int(match.group())
+        else:
+            raise ValueError(f"Нет числа в ответе: {best_id_str}")
+    except Exception as e:
+        logger.error(f"[Worker] Ошибка при выборе лучшего поста: {e}")
+        return
+
+    # Process best_id, mark others as filtered_ad
+    async with async_session_maker() as session:
+        found = False
+        for p in posts:
+            if p.id == best_id:
+                found = True
+                await PostRepository.update_status(session, p.id, 'queued')
+                await ctx['redis'].enqueue_job('process_post_task', p.id)
+            else:
+                await PostRepository.update_status(session, p.id, 'filtered_ad')
+                
+        if found:
+            bot = ctx['bot']
+            await bot.send_message(settings.MODERATOR_CHAT_ID, f"Выбран лучший пост из {len(posts)} кандидатов. Ожидайте рерайт.")
+        else:
+            logger.error(f"[Worker] Выбранный ID {best_id} не найден в списке!")

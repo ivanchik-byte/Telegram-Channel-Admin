@@ -8,7 +8,7 @@ logger = logging.getLogger("TG_Admin")
 
 class PostRepository:
     @staticmethod
-    async def process_new_post(session: AsyncSession, channel_id: int, message_id: int, post_hash: str, text: str, status: str = 'seen'):
+    async def process_new_post(session: AsyncSession, channel_id: int, message_id: int, post_hash: str, text: str, media_path: str | None = None, media_type: str | None = None, status: str = 'seen'):
         """
         Атомарный UPSERT: insert ... on conflict do nothing.
         Возвращает id нового поста или None при дубликате.
@@ -18,6 +18,8 @@ class PostRepository:
             source_message_id=message_id,
             post_hash=post_hash,
             text=text,
+            media_path=media_path,
+            media_type=media_type,
             status=status
         ).on_conflict_do_nothing(
             index_elements=['source_channel_id', 'source_message_id']
@@ -91,3 +93,42 @@ class PostRepository:
         post = result.scalars().first()
         await session.commit()
         return post
+
+    @staticmethod
+    async def get_queue_counts(session: AsyncSession):
+        """Returns tuple: (moderating_count, queued_count)"""
+        from sqlalchemy import func
+        stmt = select(ProcessedPost.status, func.count(ProcessedPost.id)).where(
+            ProcessedPost.status.in_(['moderating', 'queued'])
+        ).group_by(ProcessedPost.status)
+        
+        result = await session.execute(stmt)
+        counts = {'moderating': 0, 'queued': 0}
+        for row in result.all():
+            counts[row[0]] = row[1]
+            
+        return counts['moderating'], counts['queued']
+
+
+from src.database.models import BotSettings
+from datetime import datetime
+
+class SettingsRepository:
+    @staticmethod
+    async def get_settings(session: AsyncSession) -> BotSettings:
+        stmt = select(BotSettings).where(BotSettings.id == 1)
+        result = await session.execute(stmt)
+        settings = result.scalars().first()
+        if not settings:
+            settings = BotSettings()
+            session.add(settings)
+            await session.commit()
+        return settings
+
+    @staticmethod
+    async def update_settings(session: AsyncSession, **kwargs):
+        settings = await SettingsRepository.get_settings(session)
+        for key, value in kwargs.items():
+            setattr(settings, key, value)
+        await session.commit()
+        return settings
