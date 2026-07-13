@@ -53,20 +53,20 @@ def get_main_reply_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="Модерация"),
-                KeyboardButton(text="Статус")
+                KeyboardButton(text="\U0001f4cb Модерация"),
+                KeyboardButton(text="\U0001f4ca Статус")
             ],
             [
-                KeyboardButton(text="Парсить сейчас"),
-                KeyboardButton(text="Найти лучший пост")
+                KeyboardButton(text="\U0001f504 Парсить сейчас"),
+                KeyboardButton(text="\u2b50 Найти лучший пост")
             ],
             [
-                KeyboardButton(text="Пауза 8ч"),
-                KeyboardButton(text="Возобновить")
+                KeyboardButton(text="\u23f8 Пауза 8ч"),
+                KeyboardButton(text="\u25b6 Возобновить")
             ],
             [
-                KeyboardButton(text="Сбросить интервал"),
-                KeyboardButton(text="Очистить все")
+                KeyboardButton(text="\U0001f504 Сбросить интервал"),
+                KeyboardButton(text="\U0001f5d1 Очистить все")
             ]
         ],
         resize_keyboard=True,
@@ -114,15 +114,21 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
 
         try:
             # Publish to target channel (plain text, no HTML parsing)
+            published_with_media = False
             if post.media_path and post.media_type:
-                media_file = FSInputFile(post.media_path)
-                if post.media_type == 'photo':
-                    await bot.send_photo(chat_id=settings.TARGET_CHANNEL_ID, photo=media_file, caption=text_to_publish, parse_mode=None)
-                elif post.media_type == 'video':
-                    await bot.send_video(chat_id=settings.TARGET_CHANNEL_ID, video=media_file, caption=text_to_publish, parse_mode=None)
+                abs_path = os.path.abspath(post.media_path)
+                if os.path.exists(abs_path):
+                    media_file = FSInputFile(abs_path)
+                    if post.media_type == 'photo':
+                        await bot.send_photo(chat_id=settings.TARGET_CHANNEL_ID, photo=media_file, caption=text_to_publish, parse_mode=None)
+                    elif post.media_type == 'video':
+                        await bot.send_video(chat_id=settings.TARGET_CHANNEL_ID, video=media_file, caption=text_to_publish, parse_mode=None)
+                    else:
+                        await bot.send_document(chat_id=settings.TARGET_CHANNEL_ID, document=media_file, caption=text_to_publish, parse_mode=None)
+                    published_with_media = True
                 else:
-                    await bot.send_document(chat_id=settings.TARGET_CHANNEL_ID, document=media_file, caption=text_to_publish, parse_mode=None)
-            else:
+                    logger.warning(f"[Bot] Media file not found: {abs_path}. Publishing as text.")
+            if not published_with_media:
                 await bot.send_message(chat_id=settings.TARGET_CHANNEL_ID, text=text_to_publish, parse_mode=None)
 
             # Edit moderator message — escape user content before embedding in HTML
@@ -213,19 +219,33 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
     if post.source_link:
         await bot.send_message(chat_id=chat_id, text=f"Источник: {post.source_link}")
 
-@router.message(F.text == "Модерация", IsModeratorFilter())
+@router.message(F.text == "\U0001f4cb Модерация", IsModeratorFilter())
 async def reply_moderation(message: Message, bot: Bot):
-    from sqlalchemy import select
+    from sqlalchemy import select, func
     from src.database.engine import async_session_maker
     async with async_session_maker() as session:
+        # Get first post ready for moderation
         stmt = select(ProcessedPost).where(ProcessedPost.status == 'moderating').order_by(ProcessedPost.id.asc()).limit(1)
         result = await session.execute(stmt)
         post = result.scalars().first()
+
+        if not post:
+            # Check if there are posts still being processed
+            pending_stmt = select(func.count()).select_from(ProcessedPost).where(
+                ProcessedPost.status.in_(['queued', 'ai_processing'])
+            )
+            pending_count = (await session.execute(pending_stmt)).scalar() or 0
+            if pending_count > 0:
+                await message.reply(f"Очередь модерации пуста. Обрабатывается постов: {pending_count}")
+            else:
+                await message.reply("Очередь модерации пуста.")
+            return
+
+        # Count total moderating posts
+        count_stmt = select(func.count()).select_from(ProcessedPost).where(ProcessedPost.status == 'moderating')
+        total = (await session.execute(count_stmt)).scalar() or 0
         
-    if not post:
-        await message.reply("Очередь модерации пуста.")
-        return
-        
+    await message.reply(f"На модерации: {total}")
     await send_mod_card_to_chat(bot, message.chat.id, post)
 
 
@@ -645,19 +665,19 @@ async def cmd_parse(message: Message, command: CommandObject):
     finally:
         await redis.close()
 
-@router.message(F.text == "Парсить сейчас", IsModeratorFilter())
+@router.message(F.text == "\U0001f504 Парсить сейчас", IsModeratorFilter())
 async def reply_parse_now(message: Message):
     class DummyCommand:
         args = "5 3"
     await cmd_parse(message, DummyCommand())
 
-@router.message(F.text == "Найти лучший пост", IsModeratorFilter())
+@router.message(F.text == "\u2b50 Найти лучший пост", IsModeratorFilter())
 async def reply_find_best(message: Message):
     class DummyCommand:
         args = None
     await cmd_best(message, DummyCommand())
 
-@router.message(F.text == "Статус", IsModeratorFilter())
+@router.message(F.text == "\U0001f4ca Статус", IsModeratorFilter())
 async def reply_status(message: Message):
     await cmd_status(message)
 
@@ -667,7 +687,7 @@ async def reply_help(message: Message):
     await cmd_help(message)
 
 
-@router.message(F.text == "Пауза 8ч", IsModeratorFilter())
+@router.message(F.text == "\u23f8 Пауза 8ч", IsModeratorFilter())
 async def reply_pause_8h(message: Message):
     pause_until = datetime.now(timezone.utc) + timedelta(hours=8)
     async with async_session_maker() as session:
@@ -675,12 +695,12 @@ async def reply_pause_8h(message: Message):
     await message.reply("Бот поставлен на паузу на 8 часов (до " + pause_until.strftime('%Y-%m-%d %H:%M:%S') + " UTC).")
 
 
-@router.message(F.text == "Возобновить", IsModeratorFilter())
+@router.message(F.text == "\u25b6 Возобновить", IsModeratorFilter())
 async def reply_resume(message: Message):
     await cmd_resume(message)
 
 
-@router.message(F.text == "Сбросить интервал", IsModeratorFilter())
+@router.message(F.text == "\U0001f504 Сбросить интервал", IsModeratorFilter())
 async def reply_reset_interval(message: Message):
     async with async_session_maker() as session:
         await SettingsRepository.update_settings(session, next_post_time=None)
@@ -703,7 +723,7 @@ async def reply_reset_interval(message: Message):
         await message.reply("Интервал сброшен!")
 
 
-@router.message(F.text.in_({"Очистить очередь", "Очистить все"}), IsModeratorFilter())
+@router.message(F.text.in_({"Очистить очередь", "Очистить все", "\U0001f5d1 Очистить все"}), IsModeratorFilter())
 async def reply_clear_confirm(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
