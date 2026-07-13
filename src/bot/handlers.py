@@ -153,6 +153,34 @@ async def process_edit(callback: CallbackQuery):
         await callback.message.answer((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
         await callback.answer()
 
+@router.message(Command("start"))
+async def cmd_start(message: Message):
+    user_id = message.from_user.id
+    if user_id not in settings.ADMIN_IDS:
+        logger.warning(f"Unauthorized user {user_id} tried to use start command.")
+        await message.reply(
+            f"Доступ запрещен. Ваш Telegram ID: <code>{user_id}</code>. Добавьте его в ADMIN_IDS в файле .env.\n\n"
+            f"Если вы нашли этого бота случайно, вы можете ознакомиться с проектом на GitHub:\n"
+            f"https://github.com/ivanchik-byte/Telegram-Channel-Admin",
+            parse_mode="HTML"
+        )
+        return
+        
+    await message.reply(
+        "Привет! Я бот-модератор.\n\n"
+        "<b>Доступные команды:</b>\n"
+        "/status — статус очереди и интервалов\n"
+        "/pause — поставить на паузу\n"
+        "/resume — снять с паузы\n"
+        "/mode auto | curation — сменить режим\n"
+        "/best [время] — выбрать лучший пост\n"
+        "/interval [время] — сменить интервал\n"
+        "/clear — очистить очередь\n\n"
+        "Все команды модерирования доступны администраторам.",
+        parse_mode="HTML"
+    )
+
+
 @router.message(Command("edit"), IsModeratorFilter())
 async def process_edit_command(message: Message, command: CommandObject):
     if not command.args:
