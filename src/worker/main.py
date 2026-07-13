@@ -1,7 +1,8 @@
 from arq.connections import RedisSettings
 from src.core.config import settings
-from src.worker.tasks import process_post_task, find_best_post_task
+from src.worker.tasks import process_post_task, find_best_post_task, clean_old_posts_cron
 from src.core.logger import logger
+from arq.cron import cron
 
 from aiogram import Bot
 from aiogram.enums import ParseMode
@@ -27,7 +28,10 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_post_task, find_best_post_task]
+    functions = [process_post_task, find_best_post_task, clean_old_posts_cron]
+    cron_jobs = [
+        cron(clean_old_posts_cron, minute=0, hour=3) # run daily at 03:00 UTC
+    ]
     on_startup = startup
     on_shutdown = shutdown
     max_tries = 5       # максимум попыток для каждой задачи

@@ -360,3 +360,17 @@ async def find_best_post_task(ctx, hours: int):
             await bot.send_message(settings.effective_moderator_chat_id, f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.")
         else:
             logger.error(f"[Worker] Выбранные ID не найдены в списке!")
+
+async def clean_old_posts_cron(ctx):
+    """Cron job to clean posts older than 48 hours"""
+    logger.info("[Worker] Запуск очистки базы от постов старше 48 часов...")
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import delete
+    
+    async with async_session_maker() as session:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+        stmt = delete(ProcessedPost).where(ProcessedPost.created_at < cutoff)
+        result = await session.execute(stmt)
+        await session.commit()
+        deleted_count = result.rowcount
+        logger.info(f"[Worker] Очистка завершена. Удалено постов: {deleted_count}")
