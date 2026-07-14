@@ -49,3 +49,23 @@ def format_seconds_readable(seconds: int) -> str:
         parts.append(f"{secs} сек.")
         
     return " ".join(parts)
+
+
+def format_telegram_html(text: str) -> str:
+    """
+    Safely formats text for Telegram's HTML parse mode.
+    Escapes HTML entities first, then converts markdown **bold** to <b>bold</b>,
+    and restores allowed safe tags (<b>, <i>, <code>).
+    """
+    if not text:
+        return ""
+    from html import escape
+    import re
+    escaped = escape(text)
+    # Convert **bold** to <b>bold</b>
+    bold_converted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+    # Unescape allowed tags
+    restored = bold_converted.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+    restored = restored.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
+    restored = restored.replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
+    return restored

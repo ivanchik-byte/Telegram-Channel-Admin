@@ -34,83 +34,27 @@ def contains_ad(text: str) -> bool:
 
 async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None, source_link: str | None = None):
     """
-    Отправляет карточку модерации в MODERATOR_CHAT_ID.
-    Статус поста уже выставлен в 'moderating' вызывающим кодом до вызова этой функции.
-    При сбое отправки — только логирует ошибку, НЕ меняет статус.
-    Пост остаётся в 'moderating' с сохранённым rewritten_text.
+    Отправляет карточку модерации. 
+    Использует общую логику send_mod_card_to_chat из bot/handlers.
     """
-    # escape user content before embedding into HTML message
-    display_text = escape(text[:TG_SAFE_MESSAGE_LIMIT])
-    text_to_send = f"{i18n.get('card_new_post', channel_id=source_channel_id)}\n\n{display_text}"
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
-            InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
-        ],
-        [
-            InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
-            InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
-        ]
-    ])
+    from src.bot.handlers import send_mod_card_to_chat
+    
+    async with async_session_maker() as session:
+        stmt = select(ProcessedPost).where(ProcessedPost.id == post_id)
+        result = await session.execute(stmt)
+        post = result.scalars().first()
+        if not post:
+            logger.error(f"[Worker] Пост {post_id} не найден при отправке карточки.")
+            return
 
     try:
-        bot = ctx['bot']
-        sent = False
-        if media_path and media_type:
-            try:
-                media_file = FSInputFile(media_path)
-                if media_type == 'photo':
-                    await bot.send_photo(
-                        chat_id=settings.effective_moderator_chat_id,
-                        photo=media_file,
-                        caption=text_to_send,
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                elif media_type == 'video':
-                    await bot.send_video(
-                        chat_id=settings.effective_moderator_chat_id,
-                        video=media_file,
-                        caption=text_to_send,
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                else:
-                    await bot.send_document(
-                        chat_id=settings.effective_moderator_chat_id,
-                        document=media_file,
-                        caption=text_to_send,
-                        reply_markup=keyboard,
-                        parse_mode=ParseMode.HTML
-                    )
-                logger.info(f"[Worker] Пост {post_id} с медиа отправлен на модерацию.")
-                sent = True
-            except Exception as e:
-                logger.error(f"[Worker] Ошибка отправки медиа для поста {post_id}: {e}. Отправляем как текст.")
-                # Fallback to text if media sending fails
-                
-        if not sent:
-            await bot.send_message(
-                chat_id=settings.effective_moderator_chat_id,
-                text=text_to_send,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML
-            )
-            logger.info(f"[Worker] Пост {post_id} отправлен на модерацию (текст).")
-
-        # Send source link as next message if available
-        if source_link:
-            await bot.send_message(
-                chat_id=settings.effective_moderator_chat_id,
-                text=f"Источник: {source_link}"
-            )
-    except Exception as e:
-        # Статус не меняем: пост в 'moderating' с rewritten_text, можно восстановить.
-        if "group chat was upgraded to a supergroup chat" in str(e):
-            logger.error(f"[Worker] ОШИБКА: Группа модерации стала супергруппой. ОБНОВИТЕ MODERATOR_CHAT_ID в файле .env! Пост {post_id} сохранен, но не отправлен в чат.")
+        chat_id = int(settings.effective_moderator_chat_id) if settings.effective_moderator_chat_id.strip() else 0
+        if chat_id:
+            await send_mod_card_to_chat(ctx['bot'], chat_id, post)
         else:
-            logger.error(f"[Worker] Не удалось отправить карточку модерации для поста {post_id}: {e}")
+            logger.error("[Worker] effective_moderator_chat_id пустой, некуда отправлять карточку модерации.")
+    except Exception as e:
+        logger.error(f"[Worker] Ошибка при отправке карточки модерации: {e}")
 
 
 async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> str | None:
@@ -176,6 +120,13 @@ async def process_post_task(ctx, post_id: int):
 
         settings = await SettingsRepository.get_settings(session)
         now = datetime.now(timezone.utc)
+
+        # Check global pause
+        if settings.pause_until and settings.pause_until > now:
+            logger.info(f"[Worker] Бот на паузе до {settings.pause_until}. Откладываем пост {post_id} на 60 сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
+            return
+
         if settings.next_post_time and settings.next_post_time > now:
             delay = (settings.next_post_time - now).total_seconds()
             jitter = random.uniform(1.0, 5.0)
@@ -301,7 +252,7 @@ async def process_post_task(ctx, post_id: int):
         # Обновляем next_post_time после успешной отправки
 
 
-async def find_best_post_task(ctx, hours: int):
+async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = None):
     logger.info(f"[Worker] Поиск лучшего поста за последние {hours} часов...")
     from src.database.repository import SettingsRepository
     from datetime import datetime, timezone
@@ -317,8 +268,8 @@ async def find_best_post_task(ctx, hours: int):
         
         if not posts:
             logger.info("[Worker] Нет постов для выбора.")
-            bot = ctx['bot']
-            await bot.send_message(settings.effective_moderator_chat_id, f"Нет накопленных постов за последние {hours}ч.")
+            from src.bot.handlers import send_notification_to_all
+            await send_notification_to_all(ctx['bot'], f"Нет накопленных постов за последние {hours}ч.", requester_chat_id=requester_chat_id)
             return
 
         post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
@@ -356,8 +307,8 @@ async def find_best_post_task(ctx, hours: int):
                 await PostRepository.update_status(session, p.id, 'filtered_ad')
                 
         if best_ids:
-            bot = ctx['bot']
-            await bot.send_message(settings.effective_moderator_chat_id, f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.")
+            from src.bot.handlers import send_notification_to_all
+            await send_notification_to_all(ctx['bot'], f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.", requester_chat_id=requester_chat_id)
         else:
             logger.error(f"[Worker] Выбранные ID не найдены в списке!")
 
