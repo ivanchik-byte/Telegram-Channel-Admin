@@ -42,6 +42,19 @@ async def new_message_handler(event: events.NewMessage.Event):
 
     channel_id = event.chat_id
     message_id = event.id
+    
+    # Извлечение скрытых ссылок
+    links = []
+    if event.message.entities:
+        from telethon.tl.types import MessageEntityTextUrl
+        for ent in event.message.entities:
+            if isinstance(ent, MessageEntityTextUrl):
+                links.append(ent.url)
+    
+    if links:
+        unique_links = list(set(links))
+        text += "\n\nСкрытые ссылки из поста:\n" + "\n".join(unique_links)
+        
     post_hash = calculate_post_hash(text)
     source_link = get_telegram_link(event)
 
