@@ -514,7 +514,7 @@ async def get_status_data():
             
         lines.append("")
         lines.append(f"• <b>На модерации:</b> <code>{mod_count} / 1</code>")
-        lines.append(f"• <b>В очереди (auto):</b> <code>{queued_count} / 5</code>")
+        lines.append(f"• <b>В очереди (auto):</b> <code>{queued_count} / {settings.queue_limit}</code>")
         lines.append(f"• <b>В корзине (curation):</b> <code>{accumulated_count}</code>")
         
         text = "\n".join(lines)
@@ -531,6 +531,28 @@ async def cmd_mode(message: Message, command: CommandObject):
         await SettingsRepository.update_settings(session, mode=new_mode)
         
     await message.reply(f"Режим успешно изменен на: <b>{new_mode}</b>", parse_mode="HTML")
+
+
+@router.message(Command("queue"), IsModeratorFilter())
+async def cmd_queue(message: Message, command: CommandObject):
+    if not command.args:
+        async with async_session_maker() as session:
+            settings = await SettingsRepository.get_settings(session)
+        await message.reply(f"Текущий лимит очереди публикации: <b>{settings.queue_limit}</b> постов.\n\nИспользование: <code>/queue [число]</code> (например: /queue 20).")
+        return
+
+    try:
+        new_limit = int(command.args.strip())
+        if new_limit <= 0 or new_limit > 1000:
+            raise ValueError
+    except ValueError:
+        await message.reply("Пожалуйста, укажите корректное число от 1 до 1000.")
+        return
+
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, queue_limit=new_limit)
+        
+    await message.reply(f"Лимит очереди публикации успешно изменен на: <b>{new_limit}</b> постов.", parse_mode="HTML")
 
 
 @router.message(Command("best"), IsModeratorFilter())
@@ -689,6 +711,7 @@ async def cmd_help(message: Message):
         "  Пример: /parse 5 (парсинг 5 последних постов со всех каналов)\n"
         "- /clear — полностью очистить очередь публикации и корзину.\n"
         "- /clear_db — полностью очистить базу данных постов.\n"
+        "- /queue [лимит] — изменить максимальный размер очереди (по умолчанию 5, например: /queue 20).\n"
     )
     await message.reply(help_text, parse_mode="HTML")
 

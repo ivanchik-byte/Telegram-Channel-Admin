@@ -11,5 +11,10 @@ async_session_maker = async_sessionmaker(
 
 async def init_db():
     from src.database.models import Base
+    from sqlalchemy import text
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS queue_limit INTEGER DEFAULT 5;"))
+        except Exception:
+            pass
