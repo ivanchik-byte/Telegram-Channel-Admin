@@ -25,12 +25,12 @@
 
 ```mermaid
 flowchart TD
-    Donors["Каналы-доноры (Telegram)"] -->|Сбор постов| Parser("Парсер (Telethon)")
-    Parser -->|Сохранение постов| DB[(База данных PostgreSQL)]
-    Parser -->|Добавление задачи| Queue[(Очередь задач Redis + Arq)]
-    Queue -->|Получение задачи| Worker("Воркер (OpenAI API)")
+    Donors["Каналы-доноры (Telegram)"] -->|Сбор постов| Parser["Парсер (Telethon)"]
+    Parser -->|Сохранение постов| DB["База данных (PostgreSQL)"]
+    Parser -->|Добавление задачи| Queue["Очередь задач (Redis + Arq)"]
+    Queue -->|Получение задачи| Worker["Воркер (OpenAI API)"]
     Worker -->|Сохранение рерайта| DB
-    Worker -->|Сигнал о готовности| Bot("Модераторский бот (aiogram)")
+    Worker -->|Сигнал о готовности| Bot["Модераторский бот (aiogram)"]
     Bot -->|Карточка на ревью| ModGroup["Чат модераторов"]
     ModGroup -->|Действие модератора| Bot
     Bot -->|Обновление статуса| DB
