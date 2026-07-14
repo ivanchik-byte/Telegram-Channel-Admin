@@ -74,6 +74,26 @@ def get_main_reply_keyboard():
     )
 
 
+def get_main_inline_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📋 Модерация", callback_data="menu_moderation"),
+            InlineKeyboardButton(text="🔄 Обновить статус", callback_data="menu_status")
+        ],
+        [
+            InlineKeyboardButton(text="⚡️ Парсить сейчас", callback_data="menu_parse"),
+            InlineKeyboardButton(text="⭐️ Найти лучший пост", callback_data="menu_best")
+        ],
+        [
+            InlineKeyboardButton(text="⏸ Пауза 8ч", callback_data="menu_pause_8h"),
+            InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Очистить все", callback_data="menu_clear_all")
+        ]
+    ])
+
+
 def _parse_post_id(callback_data: str) -> int | None:
     """Safely extracts post ID from callback_data like 'publish_123'."""
     parts = callback_data.split("_", 1)
@@ -574,7 +594,7 @@ async def cmd_resume(message: Message):
 @router.message(Command("status"), IsModeratorFilter())
 async def cmd_status(message: Message):
     text = await get_status_data()
-    await message.reply(text, parse_mode="HTML")
+    await message.reply(text, reply_markup=get_main_inline_keyboard(), parse_mode="HTML")
 
 
 @router.message(Command("clear"), IsModeratorFilter())
@@ -891,3 +911,59 @@ async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
         await message.reply(f"Пост принят для ручной обработки (ID: {post_id}). Запускаю ИИ-рерайт...")
     finally:
         await redis.close()
+
+
+# --- Status Dashboard Callbacks ---
+
+@router.callback_query(F.data == "menu_status", IsModeratorFilter())
+async def cb_menu_status(callback: CallbackQuery):
+    text = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=get_main_inline_keyboard(), parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer("Статус обновлен")
+
+@router.callback_query(F.data == "menu_moderation", IsModeratorFilter())
+async def cb_menu_moderation(callback: CallbackQuery, bot: Bot):
+    await callback.answer()
+    await reply_moderation(callback.message, bot)
+
+@router.callback_query(F.data == "menu_parse", IsModeratorFilter())
+async def cb_menu_parse(callback: CallbackQuery):
+    class DummyCommand:
+        args = "5 3"
+    await callback.answer("Запускаю парсинг...")
+    await cmd_parse(callback.message, DummyCommand())
+
+@router.callback_query(F.data == "menu_best", IsModeratorFilter())
+async def cb_menu_best(callback: CallbackQuery):
+    class DummyCommand:
+        args = None
+    await callback.answer("Выбираю лучший пост...")
+    await cmd_best(callback.message, DummyCommand())
+
+@router.callback_query(F.data == "menu_pause_8h", IsModeratorFilter())
+async def cb_menu_pause_8h(callback: CallbackQuery):
+    await callback.answer("Пауза на 8 часов")
+    await reply_pause_8h(callback.message)
+    text = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=get_main_inline_keyboard(), parse_mode="HTML")
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "menu_resume", IsModeratorFilter())
+async def cb_menu_resume(callback: CallbackQuery):
+    await callback.answer("Бот возобновил работу")
+    await reply_resume(callback.message)
+    text = await get_status_data()
+    try:
+        await callback.message.edit_text(text, reply_markup=get_main_inline_keyboard(), parse_mode="HTML")
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "menu_clear_all", IsModeratorFilter())
+async def cb_menu_clear_all(callback: CallbackQuery):
+    await callback.answer("Очистка очереди...")
+    await cmd_clear(callback.message)
