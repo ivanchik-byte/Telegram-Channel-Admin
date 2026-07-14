@@ -64,8 +64,11 @@ def format_telegram_html(text: str) -> str:
     escaped = escape(text)
     # Convert **bold** to <b>bold</b>
     bold_converted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
+    # Convert ||spoiler|| to <tg-spoiler>spoiler</tg-spoiler>
+    spoiler_converted = re.sub(r'\|\|(.*?)\|\|', r'<tg-spoiler>\1</tg-spoiler>', bold_converted)
     # Unescape allowed tags
-    restored = bold_converted.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
+    restored = spoiler_converted.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
     restored = restored.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
     restored = restored.replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
+    restored = restored.replace("&lt;tg-spoiler&gt;", "<tg-spoiler>").replace("&lt;/tg-spoiler&gt;", "</tg-spoiler>")
     return restored

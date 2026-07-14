@@ -1,6 +1,6 @@
 from arq.connections import RedisSettings
 from src.core.config import settings
-from src.worker.tasks import process_post_task, find_best_post_task, clean_old_posts_cron, worker_heartbeat_cron
+from src.worker.tasks import process_post_task, find_best_post_task, clean_old_posts_cron
 from src.core.logger import logger
 from arq.cron import cron
 
@@ -28,10 +28,9 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_post_task, find_best_post_task, clean_old_posts_cron, worker_heartbeat_cron]
+    functions = [process_post_task, find_best_post_task, clean_old_posts_cron]
     cron_jobs = [
-        cron(clean_old_posts_cron, minute=0, hour=3), # run daily at 03:00 UTC
-        cron(worker_heartbeat_cron, second={0, 15, 30, 45}) # run every 15 seconds
+        cron(clean_old_posts_cron, minute=0, hour=3) # run daily at 03:00 UTC
     ]
     on_startup = startup
     on_shutdown = shutdown
