@@ -294,23 +294,47 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         logger.error(f"[Worker] Ошибка при выборе лучшего поста: {e}")
         return
 
+    best_post_id = best_ids[0]
+    other_best_ids = best_ids[1:]
+
+    # 1. Process the best post immediately
     async with async_session_maker() as session:
-        found_first = None
+        stmt = select(ProcessedPost).where(ProcessedPost.id == best_post_id)
+        result = await session.execute(stmt)
+        best_post = result.scalars().first()
+        
+        if best_post and best_post.status in ['queued', 'accumulated']:
+            best_post = await PostRepository.atomic_status_update(session, best_post.id, best_post.status, 'ai_processing')
+            
+    if best_post:
+        from src.worker.tasks import _call_ai_with_retry
+        rewritten = await _call_ai_with_retry(client, best_post.text, best_post.id)
+        if rewritten:
+            async with async_session_maker() as session:
+                await PostRepository.update_post_ready_for_moderation(session, best_post.id, rewritten)
+                await send_moderation_card(ctx, best_post.id, best_post.source_channel_id, rewritten, best_post.media_path, best_post.media_type, best_post.source_link)
+        else:
+            async with async_session_maker() as session:
+                await PostRepository.update_status(session, best_post.id, 'failed')
+
+    # 2. Queue the remaining best posts and mark the rest as filtered_ad
+    async with async_session_maker() as session:
         for p in posts:
-            if p.id in best_ids:
-                if found_first is None and p.id == best_ids[0]:
-                    found_first = p.id
+            if p.id == best_post_id:
+                continue
+            if p.id in other_best_ids:
                 await PostRepository.update_status(session, p.id, 'queued')
-                # Enqueue all selected posts
                 await ctx['redis'].enqueue_job('process_post_task', p.id)
             else:
                 await PostRepository.update_status(session, p.id, 'filtered_ad')
                 
-        if best_ids:
-            from src.bot.handlers import send_notification_to_all
-            await send_notification_to_all(ctx['bot'], f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Они отправлены в очередь на рерайт и публикацию.", requester_chat_id=requester_chat_id)
-        else:
-            logger.error(f"[Worker] Выбранные ID не найдены в списке!")
+    if best_ids:
+        from src.bot.handlers import send_notification_to_all
+        await send_notification_to_all(
+            ctx['bot'], 
+            f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Лучший пост сразу отправлен на модерацию, остальные {len(other_best_ids)} добавлены в очередь.", 
+            requester_chat_id=requester_chat_id
+        )
 
 async def clean_old_posts_cron(ctx):
     """Cron job to clean posts older than 48 hours"""
