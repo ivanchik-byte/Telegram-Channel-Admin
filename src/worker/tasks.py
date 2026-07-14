@@ -325,3 +325,9 @@ async def clean_old_posts_cron(ctx):
         await session.commit()
         deleted_count = result.rowcount
         logger.info(f"[Worker] Очистка завершена. Удалено постов: {deleted_count}")
+
+
+async def worker_heartbeat_cron(ctx):
+    """Cron job to write worker heartbeat to Redis"""
+    redis = ctx['redis']
+    await redis.setex('worker_heartbeat', 45, 'online')

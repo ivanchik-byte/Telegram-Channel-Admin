@@ -492,10 +492,25 @@ async def get_status_data():
         acc_result = await session.execute(stmt)
         accumulated_count = len(acc_result.all())
         
+        # Check if worker is online
+        from arq import create_pool
+        from arq.connections import RedisSettings
+        is_worker_online = False
+        try:
+            redis_pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+            worker_status = await redis_pool.get('worker_heartbeat')
+            is_worker_online = (worker_status == b'online' or worker_status == 'online')
+            await redis_pool.close()
+        except Exception:
+            pass
+            
+        worker_status_text = "🟢 Онлайн" if is_worker_online else "🔴 ОФФЛАЙН (Не работает!)"
+        
         lines = [
             "<b>Текущий статус бота:</b>\n",
             f"• <b>Режим:</b> <code>{settings.mode}</code>",
             f"• <b>Интервал:</b> <code>{format_seconds_readable(settings.interval_min)} - {format_seconds_readable(settings.interval_max)}</code>",
+            f"• <b>Воркер (ИИ/Парсер):</b> <code>{worker_status_text}</code>",
         ]
         
         now = datetime.now(timezone.utc)
@@ -577,8 +592,16 @@ async def cmd_best(message: Message, command: CommandObject):
         
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
+        worker_status = await redis.get('worker_heartbeat')
+        is_worker_online = (worker_status == b'online' or worker_status == 'online')
+        
         await redis.enqueue_job('find_best_post_task', hours, requester_chat_id=message.chat.id)
-        await message.reply(f"Запущен поиск лучшего поста за последние {hours} часов. Ожидайте...")
+        
+        warning = ""
+        if not is_worker_online:
+            warning = "\n\n⚠️ <b>Внимание:</b> Фоновый воркер (ИИ/Парсер) сейчас <b>ОФФЛАЙН</b>! Задача поставлена в очередь, но будет выполнена только после его запуска."
+            
+        await message.reply(f"Запущен поиск лучшего поста за последние {hours} часов. Ожидайте...{warning}", parse_mode="HTML")
     finally:
         await redis.close()
 
@@ -816,14 +839,21 @@ async def cmd_parse(message: Message, command: CommandObject):
 
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
+        worker_status = await redis.get('worker_heartbeat')
+        is_worker_online = (worker_status == b'online' or worker_status == 'online')
+        
         # format: limit|num_channels|time_offset|requester_chat_id
         await redis.set('force_parse', f"{limit}|{num_channels}|{time_offset}|{message.chat.id}")
         
+        warning = ""
+        if not is_worker_online:
+            warning = "\n\n⚠️ <b>Внимание:</b> Фоновый воркер (ИИ/Парсер) сейчас <b>ОФФЛАЙН</b>! Сигнал записан, но не будет выполнен, пока вы не запустите воркер."
+
         target_str = f"{num_channels} случайных каналов" if num_channels != '0' else "всех каналов"
         if time_offset:
-            await message.reply(f"Сигнал отправлен. Парсер загружает сообщения за последние {time_offset} из {target_str}...")
+            await message.reply(f"Сигнал отправлен. Парсер загружает сообщения за последние {time_offset} из {target_str}...{warning}", parse_mode="HTML")
         else:
-            await message.reply(f"Сигнал отправлен. Парсер загружает последние {limit} сообщений из {target_str}...")
+            await message.reply(f"Сигнал отправлен. Парсер загружает последние {limit} сообщений из {target_str}...{warning}", parse_mode="HTML")
     except Exception as e:
         await message.reply(f"Ошибка при отправке сигнала парсеру: {e}")
     finally:
