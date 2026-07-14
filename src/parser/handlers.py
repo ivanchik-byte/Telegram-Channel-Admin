@@ -55,7 +55,12 @@ async def new_message_handler(event: events.NewMessage.Event):
 
         mode = settings.mode
         
-        if mode == 'auto':
+        # Check advertising
+        from src.worker.tasks import contains_ad
+        if contains_ad(text):
+            logger.info(f"[Parser] Пост {message_id} из {channel_id} отфильтрован как реклама на этапе парсинга.")
+            initial_status = 'filtered_ad'
+        elif mode == 'auto':
             # Check limits
             mod_count, queued_count = await PostRepository.get_queue_counts(session)
             if mod_count >= 1 and queued_count >= 5:

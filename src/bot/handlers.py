@@ -168,8 +168,11 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
 
             logger.info(f"[Bot] Пост {post_id} опубликован в канал.")
         except Exception as e:
+            # Revert status back to moderating so we don't block the post permanently
+            async with async_session_maker() as rollback_session:
+                await PostRepository.update_status(rollback_session, post_id, 'moderating')
             logger.error(f"[Bot] Ошибка публикации поста {post_id}: {e}")
-            await callback.answer(i18n.get('msg_publish_error'), show_alert=True)
+            await callback.answer(f"❌ Ошибка публикации: {e}", show_alert=True)
 
 async def _apply_interval_after_moderation(session):
     from src.database.repository import SettingsRepository
@@ -218,10 +221,7 @@ async def process_reject(callback: CallbackQuery):
 async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
     display_text = format_telegram_html((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
     
-    # Добавляем ссылку на источник в конец текста, если она есть
     text_to_send = display_text
-    if post.source_link:
-        text_to_send += f"\n\n<a href='{post.source_link}'>Источник</a>"
         
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -266,6 +266,33 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
                 if "group chat was upgraded to a supergroup chat" in str(e):
                     logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
                 logger.error(f"[Bot] Error sending message to {target_chat_id}: {e}")
+
+    # Отправляем ссылки и источник отдельным СМС в конце
+    import re
+    extra_links = []
+    if post.text:
+        all_urls = re.findall(r'https?://[^\s>]+', post.text)
+        for url in all_urls:
+            url = url.rstrip('.,);:!?')
+            if "t.me/" in url:
+                continue
+            if url not in extra_links:
+                extra_links.append(url)
+
+    extra_parts = []
+    if extra_links:
+        links_formatted = "\n".join([f"• {l}" for l in extra_links])
+        extra_parts.append(f"<b>Дополнительные ссылки:</b>\n{links_formatted}")
+    if post.source_link:
+        extra_parts.append(f"<b>Источник:</b> <a href='{post.source_link}'>Перейти к оригиналу</a>")
+
+    if extra_parts:
+        extra_text = "\n\n".join(extra_parts)
+        for target_chat_id in set(chat_ids_to_send):
+            try:
+                await bot.send_message(chat_id=target_chat_id, text=extra_text, parse_mode="HTML", disable_web_page_preview=True)
+            except Exception as e:
+                logger.error(f"[Bot] Error sending extra links to {target_chat_id}: {e}")
 
 @router.message(F.text == "\U0001f4cb Модерация", IsModeratorFilter())
 async def reply_moderation(message: Message, bot: Bot):
@@ -561,6 +588,16 @@ async def cmd_clear(message: Message):
     await message.reply("<b>Очередь публикации, модерация и кураторская корзина полностью очищены.</b>", parse_mode="HTML")
 
 
+@router.message(Command("clear_db"), IsModeratorFilter())
+async def cmd_clear_db(message: Message):
+    async with async_session_maker() as session:
+        stmt = delete(ProcessedPost)
+        result = await session.execute(stmt)
+        await session.commit()
+        deleted_count = result.rowcount
+    await message.reply(f"<b>База данных полностью очищена.</b> Удалено записей: {deleted_count}.", parse_mode="HTML")
+
+
 @router.message(Command("help"), IsModeratorFilter())
 async def cmd_help(message: Message):
     help_text = (
@@ -592,6 +629,7 @@ async def cmd_help(message: Message):
         "  Пример: /parse 10,2 (парсинг последних 10 постов из 2 случайных каналов)\n"
         "  Пример: /parse 5 (парсинг 5 последних постов со всех каналов)\n"
         "- /clear — полностью очистить очередь публикации и корзину.\n"
+        "- /clear_db — полностью очистить базу данных постов.\n"
     )
     await message.reply(help_text, parse_mode="HTML")
 
