@@ -41,3 +41,4 @@ class BotSettings(Base):
     interval_max: Mapped[int] = mapped_column(Integer, default=0)
     pause_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     next_post_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    queue_limit: Mapped[int] = mapped_column(Integer, default=5)

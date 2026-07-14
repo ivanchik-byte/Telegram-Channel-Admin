@@ -63,8 +63,8 @@ async def new_message_handler(event: events.NewMessage.Event):
         elif mode == 'auto':
             # Check limits
             mod_count, queued_count = await PostRepository.get_queue_counts(session)
-            if mod_count >= 1 and queued_count >= 5:
-                logger.info(f"[Parser] Очередь переполнена (1 на модерации, 5 в очереди). Игнорируем пост {message_id}.")
+            if mod_count >= 1 and queued_count >= settings.queue_limit:
+                logger.info(f"[Parser] Очередь переполнена (1 на модерации, {settings.queue_limit} в очереди). Игнорируем пост {message_id}.")
                 return
             initial_status = 'queued'
         else:
