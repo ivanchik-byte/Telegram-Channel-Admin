@@ -95,6 +95,18 @@ async def new_message_handler(event: events.NewMessage.Event):
                 media_type = None
 
     async with async_session_maker() as session:
+        if initial_status == 'queued':
+            mod_count, queued_count = await PostRepository.get_queue_counts(session)
+            if mod_count >= 1 and queued_count >= settings.queue_limit:
+                logger.info(f"[Parser] Очередь переполнена перед сохранением (1 на модерации, {settings.queue_limit} в очереди). Игнорируем пост {message_id}.")
+                if media_path:
+                    try:
+                        import os
+                        os.remove(media_path)
+                    except Exception:
+                        pass
+                return
+
         post_id = await PostRepository.process_new_post(
             session=session,
             channel_id=channel_id,
