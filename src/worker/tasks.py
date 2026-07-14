@@ -123,7 +123,7 @@ async def process_post_task(ctx, post_id: int):
 
         # Check global pause
         if settings.pause_until and settings.pause_until > now:
-            logger.info(f"[Worker] Бот на паузе до {settings.pause_until}. Откладываем пост {post_id} на 60 сек.")
+            logger.debug(f"[Worker] Бот на паузе до {settings.pause_until}. Откладываем пост {post_id} на 60 сек.")
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
             return
 
