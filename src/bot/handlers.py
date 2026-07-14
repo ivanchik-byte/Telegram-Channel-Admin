@@ -66,7 +66,8 @@ def get_main_reply_keyboard():
                 KeyboardButton(text="\u25b6 Возобновить")
             ],
             [
-                KeyboardButton(text="🗑 Очистить очередь")
+                KeyboardButton(text="🗑 Очистить все"),
+                KeyboardButton(text="🗄 Очистить БД")
             ]
         ],
         resize_keyboard=True,
@@ -89,7 +90,8 @@ def get_main_inline_keyboard():
             InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")
         ],
         [
-            InlineKeyboardButton(text="🗑 Очистить очередь", callback_data="menu_clear_all")
+            InlineKeyboardButton(text="🗑 Очистить все", callback_data="menu_clear_all"),
+            InlineKeyboardButton(text="🗄 Очистить БД", callback_data="menu_clear_db")
         ]
     ])
 
@@ -839,7 +841,7 @@ async def reply_resume(message: Message):
     await cmd_resume(message)
 
 
-@router.message(F.text.in_({"Очистить очередь", "Очистить все", "\U0001f5d1 Очистить все"}), IsModeratorFilter())
+@router.message(F.text.in_({"Очистить все", "🗑 Очистить все"}), IsModeratorFilter())
 async def reply_clear_confirm(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -848,6 +850,16 @@ async def reply_clear_confirm(message: Message):
         ]
     ])
     await message.reply("Вы действительно хотите полностью очистить очередь публикации, модерацию и кураторскую корзину?", reply_markup=keyboard)
+
+@router.message(F.text.in_({"Очистить БД", "🗄 Очистить БД"}), IsModeratorFilter())
+async def reply_clear_db_confirm(message: Message):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Да, очистить БД", callback_data="btn_db_clear_yes"),
+            InlineKeyboardButton(text="Отмена", callback_data="btn_db_clear_no")
+        ]
+    ])
+    await message.reply("Вы действительно хотите полностью очистить БАЗУ ДАННЫХ постов? Это действие удалит всю историю постов.", reply_markup=keyboard)
 
 @router.callback_query(F.data == "btn_quick_clear_yes", IsModeratorFilter())
 async def cb_quick_clear_yes(callback: CallbackQuery):
@@ -860,10 +872,25 @@ async def cb_quick_clear_yes(callback: CallbackQuery):
     await callback.message.edit_text("<b>Очередь публикации, модерация и кураторская корзина полностью очищены.</b>", parse_mode="HTML")
     await callback.answer()
 
+@router.callback_query(F.data == "btn_db_clear_yes", IsModeratorFilter())
+async def cb_db_clear_yes(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        stmt = delete(ProcessedPost)
+        result = await session.execute(stmt)
+        await session.commit()
+        deleted_count = result.rowcount
+    await callback.message.edit_text(f"<b>База данных полностью очищена.</b> Удалено записей: {deleted_count}.", parse_mode="HTML")
+    await callback.answer()
+
 @router.callback_query(F.data == "btn_quick_clear_no", IsModeratorFilter())
 async def cb_quick_clear_no(callback: CallbackQuery):
     await callback.message.delete()
     await callback.answer("Очистка отменена")
+
+@router.callback_query(F.data == "btn_db_clear_no", IsModeratorFilter())
+async def cb_db_clear_no(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Отменено")
 
 @router.message(IsModeratorFilter())
 async def handle_manual_post(message: Message, state: FSMContext, bot: Bot):
@@ -1004,3 +1031,8 @@ async def cb_menu_resume(callback: CallbackQuery):
 async def cb_menu_clear_all(callback: CallbackQuery):
     await callback.answer("Очистка очереди...")
     await cmd_clear(callback.message)
+
+@router.callback_query(F.data == "menu_clear_db", IsModeratorFilter())
+async def cb_menu_clear_db(callback: CallbackQuery):
+    await callback.answer("Очистка базы данных...")
+    await reply_clear_db_confirm(callback.message)
