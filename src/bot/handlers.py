@@ -66,7 +66,7 @@ def get_main_reply_keyboard():
                 KeyboardButton(text="\u25b6 Возобновить")
             ],
             [
-                KeyboardButton(text="\U0001f5d1 Очистить все")
+                KeyboardButton(text="🗑 Очистить очередь")
             ]
         ],
         resize_keyboard=True,
@@ -89,7 +89,7 @@ def get_main_inline_keyboard():
             InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")
         ],
         [
-            InlineKeyboardButton(text="🗑 Очистить все", callback_data="menu_clear_all")
+            InlineKeyboardButton(text="🗑 Очистить очередь", callback_data="menu_clear_all")
         ]
     ])
 
@@ -325,22 +325,59 @@ async def reply_moderation(message: Message, bot: Bot):
         post = result.scalars().first()
 
         if not post:
-            # Check if there are posts still being processed
-            pending_stmt = select(func.count()).select_from(ProcessedPost).where(
-                ProcessedPost.status.in_(['queued', 'ai_processing'])
-            )
-            pending_count = (await session.execute(pending_stmt)).scalar() or 0
-            if pending_count > 0:
-                await message.reply(f"Очередь модерации пуста. Обрабатывается постов: {pending_count}")
+            # Check if there are posts in queued or accumulated status
+            stmt = select(ProcessedPost).where(
+                ProcessedPost.status.in_(['queued', 'accumulated'])
+            ).order_by(ProcessedPost.id.asc()).limit(1)
+            result = await session.execute(stmt)
+            next_post = result.scalars().first()
+            
+            if next_post:
+                # Atomically update to ai_processing
+                post_locked = await PostRepository.atomic_status_update(session, next_post.id, next_post.status, 'ai_processing')
+                if post_locked:
+                    progress_msg = await message.reply("🔄 Извлекаю следующий пост из очереди и запускаю ИИ-рерайт...")
+                    
+                    from openai import AsyncOpenAI
+                    from src.worker.tasks import _call_ai_with_retry
+                    ai_client = AsyncOpenAI(api_key=settings.AI_API_KEY, base_url=settings.AI_BASE_URL)
+                    
+                    # Release session lock during network call
+                    await session.commit()
+                    
+                    rewritten = await _call_ai_with_retry(ai_client, post_locked.text, post_locked.id)
+                    if rewritten:
+                        async with async_session_maker() as new_session:
+                            await PostRepository.update_post_ready_for_moderation(new_session, post_locked.id, rewritten)
+                            # Fetch updated post
+                            stmt = select(ProcessedPost).where(ProcessedPost.id == post_locked.id)
+                            res = await new_session.execute(stmt)
+                            post = res.scalars().first()
+                            
+                        # Delete the progress message
+                        try:
+                            await progress_msg.delete()
+                        except Exception:
+                            pass
+                    else:
+                        async with async_session_maker() as new_session:
+                            await PostRepository.update_status(new_session, post_locked.id, 'failed')
+                        await progress_msg.edit_text("❌ Не удалось переписать пост с помощью ИИ.")
+                        return
+                else:
+                    # Locked by another process
+                    await message.reply("Пост уже обрабатывается. Пожалуйста, нажмите «Модерация» еще раз через пару секунд.")
+                    return
             else:
-                await message.reply("Очередь модерации пуста.")
-            return
+                # No posts at all
+                await message.reply("Очередь модерации и входящих постов пуста.")
+                return
 
         # Count total moderating posts
         count_stmt = select(func.count()).select_from(ProcessedPost).where(ProcessedPost.status == 'moderating')
         total = (await session.execute(count_stmt)).scalar() or 0
         
-    await message.reply(f"На модерации: {total}")
+    await message.reply(f"На модерации осталось постов: {total}")
     await send_mod_card_to_chat(bot, message.chat.id, post)
 
 
