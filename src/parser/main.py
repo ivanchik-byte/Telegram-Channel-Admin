@@ -23,6 +23,7 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     limit = 5
                     num_channels = 0
                     time_offset = ''
+                    requester_chat_id = None
 
                     if '|' in val_str:
                         parts = val_str.split('|')
@@ -31,6 +32,11 @@ async def check_force_parse(client: TelegramClient, channels: list):
                             num_channels = int(parts[1]) if parts[1].isdigit() else 0
                         if len(parts) > 2:
                             time_offset = parts[2]
+                        if len(parts) > 3 and parts[3].strip():
+                            try:
+                                requester_chat_id = int(parts[3].strip())
+                            except ValueError:
+                                pass
                     else:
                         # Fallback for old format
                         limit = int(val_str) if val_str.isdigit() else 5
@@ -84,16 +90,26 @@ async def check_force_parse(client: TelegramClient, channels: list):
                         except Exception as e:
                             logger.error(f"Error parsing channel {channel}: {e}")
                     
-                    # Send notification to MODERATOR_CHAT_ID via Telegram Bot API
+                    # Send notification via Telegram Bot API
                     import httpx
+                    chat_ids = []
+                    if requester_chat_id:
+                        chat_ids.append(str(requester_chat_id))
+                    else:
+                        chat_ids.append(settings.effective_moderator_chat_id)
+                        if settings.ADMIN_IDS and str(settings.ADMIN_IDS[0]) != str(settings.effective_moderator_chat_id):
+                            chat_ids.append(str(settings.ADMIN_IDS[0]))
+                    
                     try:
                         async with httpx.AsyncClient() as http_client:
                             url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
                             text = f"Ручной парсинг успешно завершен. Импортировано новых уникальных постов: {parsed_count}."
-                            await http_client.post(url, json={
-                                "chat_id": settings.effective_moderator_chat_id,
-                                "text": text
-                            })
+                            for cid in set(chat_ids):
+                                if cid:
+                                    await http_client.post(url, json={
+                                        "chat_id": cid,
+                                        "text": text
+                                    })
                     except Exception as err:
                         logger.error(f"Failed to send parsing finished notification: {err}")
             except Exception as e:

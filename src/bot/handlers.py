@@ -1,4 +1,5 @@
 from html import escape
+from src.core.utils import format_telegram_html
 import os
 from aiogram import Router, F, Bot
 from aiogram.fsm.state import State, StatesGroup
@@ -81,6 +82,24 @@ def _parse_post_id(callback_data: str) -> int | None:
     return int(parts[1])
 
 
+async def send_notification_to_all(bot: Bot, text: str, requester_chat_id: int | None = None):
+    """Sends a text message to the requester, or both the main moderation channel and the first admin PM if not specified."""
+    if requester_chat_id:
+        chat_ids = [str(requester_chat_id)]
+    else:
+        chat_ids = [settings.effective_moderator_chat_id]
+        if settings.ADMIN_IDS and str(settings.ADMIN_IDS[0]) != str(settings.effective_moderator_chat_id):
+            chat_ids.append(str(settings.ADMIN_IDS[0]))
+    
+    for cid in set(chat_ids):
+        if not cid:
+            continue
+        try:
+            await bot.send_message(chat_id=cid, text=text, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"[Bot] Error sending notification to {cid}: {e}")
+
+
 def _cleanup_media(media_path: str | None, action: str) -> None:
     """Helper to clean up media files after publication or rejection."""
     if media_path and os.path.exists(media_path):
@@ -118,21 +137,22 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
                 abs_path = os.path.abspath(post.media_path)
                 if os.path.exists(abs_path):
                     media_file = FSInputFile(abs_path)
+                    formatted_pub_text = format_telegram_html(text_to_publish)
                     if post.media_type == 'photo':
-                        await bot.send_photo(chat_id=settings.TARGET_CHANNEL_ID, photo=media_file, caption=text_to_publish, parse_mode=None)
+                        await bot.send_photo(chat_id=settings.TARGET_CHANNEL_ID, photo=media_file, caption=formatted_pub_text, parse_mode="HTML")
                     elif post.media_type == 'video':
-                        await bot.send_video(chat_id=settings.TARGET_CHANNEL_ID, video=media_file, caption=text_to_publish, parse_mode=None)
+                        await bot.send_video(chat_id=settings.TARGET_CHANNEL_ID, video=media_file, caption=formatted_pub_text, parse_mode="HTML")
                     else:
-                        await bot.send_document(chat_id=settings.TARGET_CHANNEL_ID, document=media_file, caption=text_to_publish, parse_mode=None)
+                        await bot.send_document(chat_id=settings.TARGET_CHANNEL_ID, document=media_file, caption=formatted_pub_text, parse_mode="HTML")
                     published_with_media = True
                 else:
                     logger.warning(f"[Bot] Media file not found: {abs_path}. Publishing as text.")
             if not published_with_media:
-                await bot.send_message(chat_id=settings.TARGET_CHANNEL_ID, text=text_to_publish, parse_mode=None)
+                await bot.send_message(chat_id=settings.TARGET_CHANNEL_ID, text=format_telegram_html(text_to_publish), parse_mode="HTML")
 
             # Edit moderator message — escape user content before embedding in HTML
             action_by = callback.from_user.username or callback.from_user.full_name
-            display_text = escape(text_to_publish[:TG_SAFE_MESSAGE_LIMIT])
+            display_text = format_telegram_html(text_to_publish[:TG_SAFE_MESSAGE_LIMIT])
             new_text = f"{i18n.get('msg_published')}\n👤 Действие от: {action_by}\n\n{display_text}"
             
             if callback.message.photo or callback.message.video or callback.message.document:
@@ -179,7 +199,7 @@ async def process_reject(callback: CallbackQuery):
             return
 
         action_by = callback.from_user.username or callback.from_user.full_name
-        display_text = escape((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
+        display_text = format_telegram_html((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
         new_text = f"{i18n.get('msg_rejected')}\n👤 Действие от: {action_by}\n\n{display_text}"
         
         if callback.message.photo or callback.message.video or callback.message.document:
@@ -196,7 +216,7 @@ async def process_reject(callback: CallbackQuery):
 
 
 async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
-    display_text = escape((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
+    display_text = format_telegram_html((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
     
     # Добавляем ссылку на источник в конец текста, если она есть
     text_to_send = display_text
@@ -361,31 +381,8 @@ async def process_edit_command(message: Message, command: CommandObject):
             await message.reply(i18n.get('msg_edit_post_not_found'))
             return
 
-        # Send new moderation card — escape user content before embedding in HTML
-        display_text = escape(new_text[:TG_SAFE_MESSAGE_LIMIT])
-        text_to_send = f"{i18n.get('card_edited_post', channel_id=post.source_channel_id)}\n\n{display_text}"
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text=i18n.get('btn_publish'), callback_data=f"publish_{post_id}"),
-                InlineKeyboardButton(text=i18n.get('btn_reject'), callback_data=f"reject_{post_id}")
-            ],
-            [
-                InlineKeyboardButton(text=i18n.get('btn_edit'), callback_data=f"edit_{post_id}"),
-                InlineKeyboardButton(text=i18n.get('btn_change_media'), callback_data=f"change_media_{post_id}")
-            ]
-        ])
-
-        if post.media_path and os.path.exists(post.media_path):
-            media_file = FSInputFile(post.media_path)
-            if post.media_type == 'photo':
-                await message.answer_photo(photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-            elif post.media_type == 'video':
-                await message.answer_video(video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-            else:
-                await message.answer_document(document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await message.answer(text_to_send, reply_markup=keyboard, parse_mode="HTML")
+        # Send new moderation card
+        await send_mod_card_to_chat(message.bot, message.chat.id, post)
             
         await message.reply(i18n.get('msg_edit_success'))
         logger.info(f"[Bot] Текст поста {post_id} изменен вручную модератором.")
@@ -472,7 +469,7 @@ async def cmd_best(message: Message, command: CommandObject):
         
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
-        await redis.enqueue_job('find_best_post_task', hours)
+        await redis.enqueue_job('find_best_post_task', hours, requester_chat_id=message.chat.id)
         await message.reply(f"Запущен поиск лучшего поста за последние {hours} часов. Ожидайте...")
     finally:
         await redis.close()
@@ -699,8 +696,8 @@ async def cmd_parse(message: Message, command: CommandObject):
 
     redis = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
     try:
-        # format: limit|num_channels|time_offset
-        await redis.set('force_parse', f"{limit}|{num_channels}|{time_offset}")
+        # format: limit|num_channels|time_offset|requester_chat_id
+        await redis.set('force_parse', f"{limit}|{num_channels}|{time_offset}|{message.chat.id}")
         
         target_str = f"{num_channels} случайных каналов" if num_channels != '0' else "всех каналов"
         if time_offset:
