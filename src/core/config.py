@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     AI_API_KEY: str # Strict, no default
     AI_BASE_URL: str = "https://api.openai.com/v1"
     AI_MODEL: str = "gpt-4o-mini"
-    AD_KEYWORDS: str = "реклама,erid,промокод,подписывайтесь"
+    AD_KEYWORDS: str = "реклама,erid,промокод,подписывайтесь,розыгрыш,конкурс"
     AI_EXTRA_BODY: Json[dict] = "{}"
     
     ADMIN_IDS: list[int] = Field(default_factory=list)
