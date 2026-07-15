@@ -253,6 +253,9 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
         [
             InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_{post.id}"),
             InlineKeyboardButton(text="🖼 Медиа", callback_data=f"change_media_{post.id}")
+        ],
+        [
+            InlineKeyboardButton(text="📏 Длина", callback_data=f"length_menu_{post.id}")
         ]
     ])
 
@@ -787,6 +790,170 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
             await message.reply("Пост уже обработан или не найден.")
             
     await state.clear()
+
+
+async def ai_adjust_length(text: str, target: str) -> str | None:
+    """
+    Calls OpenAI to adjust the length of the text.
+    target is 'shorter' or 'longer'.
+    """
+    from openai import AsyncOpenAI
+    from src.core.prompts import SYSTEM_PROMPT_REWRITE
+    
+    client = AsyncOpenAI(api_key=settings.AI_API_KEY, base_url=settings.AI_BASE_URL)
+    
+    if target == 'shorter':
+        instruction = "Сделай текст поста значительно короче (примерно на 30-50% меньше по количеству слов/предложений). Оставь только самую суть, ключевые факты и цифры. Формат и стиль (заголовок жирным, жирные ключевые слова) сохрани."
+    else:
+        instruction = "Сделай текст поста подробнее и длиннее. Добавь больше контекста и деталей на основе предоставленного текста. Формат и стиль (заголовок жирным, жирные ключевые слова) сохрани."
+        
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_REWRITE},
+        {"role": "user", "content": text},
+        {"role": "user", "content": instruction}
+    ]
+    
+    try:
+        response = await client.chat.completions.create(
+            model=settings.AI_MODEL,
+            messages=messages,
+            extra_body=settings.AI_EXTRA_BODY or {}
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"[AI Adjust] Error: {e}")
+        return None
+
+
+@router.callback_query(F.data.startswith("length_menu_"), IsModeratorFilter())
+async def process_length_menu(callback: CallbackQuery):
+    post_id = _parse_post_id(callback.data)
+    if post_id is None:
+        await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📉 Короче", callback_data=f"shorten_{post_id}"),
+            InlineKeyboardButton(text="📈 Длиннее", callback_data=f"lengthen_{post_id}")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"back_to_mod_{post_id}")
+        ]
+    ])
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"[Bot] Error editing reply markup in length_menu: {e}")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("back_to_mod_"), IsModeratorFilter())
+async def process_back_to_mod(callback: CallbackQuery):
+    post_id = _parse_post_id(callback.data)
+    if post_id is None:
+        await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish_{post_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{post_id}")
+        ],
+        [
+            InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_{post_id}"),
+            InlineKeyboardButton(text="🖼 Медиа", callback_data=f"change_media_{post_id}")
+        ],
+        [
+            InlineKeyboardButton(text="📏 Длина", callback_data=f"length_menu_{post_id}")
+        ]
+    ])
+    try:
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"[Bot] Error editing reply markup in back_to_mod: {e}")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shorten_"), IsModeratorFilter())
+async def process_shorten(callback: CallbackQuery):
+    await handle_length_change(callback, 'shorter')
+
+
+@router.callback_query(F.data.startswith("lengthen_"), IsModeratorFilter())
+async def process_lengthen(callback: CallbackQuery):
+    await handle_length_change(callback, 'longer')
+
+
+async def handle_length_change(callback: CallbackQuery, target: str):
+    post_id = _parse_post_id(callback.data)
+    if post_id is None:
+        await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+        return
+
+    async with async_session_maker() as session:
+        post = await PostRepository.get_post_by_id(session, post_id)
+        if not post or post.status != 'moderating':
+            await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
+            return
+
+    # Show loading status
+    loading_text = "⏳ <b>Нейросеть переписывает пост...</b>"
+    try:
+        if callback.message.photo or callback.message.video or callback.message.document:
+            await callback.message.edit_caption(caption=loading_text, reply_markup=None, parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=loading_text, reply_markup=None, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"[Bot] Error updating loading status: {e}")
+
+    # Call AI using the original parsed text as source
+    source_text = post.text
+    new_text = await ai_adjust_length(source_text, target)
+    
+    def get_keyboard(p_id):
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Опубликовать", callback_data=f"publish_{p_id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{p_id}")
+            ],
+            [
+                InlineKeyboardButton(text="📝 Текст", callback_data=f"edit_{p_id}"),
+                InlineKeyboardButton(text="🖼 Медиа", callback_data=f"change_media_{p_id}")
+            ],
+            [
+                InlineKeyboardButton(text="📏 Длина", callback_data=f"length_menu_{p_id}")
+            ]
+        ])
+
+    if not new_text:
+        await callback.answer("Ошибка при обращении к ИИ. Попробуйте еще раз.", show_alert=True)
+        display_text = format_telegram_html((post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT])
+        try:
+            if callback.message.photo or callback.message.video or callback.message.document:
+                await callback.message.edit_caption(caption=display_text, reply_markup=get_keyboard(post_id), parse_mode="HTML")
+            else:
+                await callback.message.edit_text(text=display_text, reply_markup=get_keyboard(post_id), parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"[Bot] Error restoring card: {e}")
+        return
+
+    # Update database
+    async with async_session_maker() as session:
+        await PostRepository.atomic_edit_text(session, post_id, 'moderating', new_text)
+
+    # Show new text
+    display_text = format_telegram_html(new_text[:TG_SAFE_MESSAGE_LIMIT])
+    try:
+        if callback.message.photo or callback.message.video or callback.message.document:
+            await callback.message.edit_caption(caption=display_text, reply_markup=get_keyboard(post_id), parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=display_text, reply_markup=get_keyboard(post_id), parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"[Bot] Error showing adjusted text: {e}")
+        
+    await callback.answer("Готово!")
+
 
 # --- Reply Keyboard Button Handlers ---
 
