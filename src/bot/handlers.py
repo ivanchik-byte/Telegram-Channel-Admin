@@ -97,8 +97,8 @@ def get_main_inline_keyboard():
 
 
 def _parse_post_id(callback_data: str) -> int | None:
-    """Safely extracts post ID from callback_data like 'publish_123'."""
-    parts = callback_data.split("_", 1)
+    """Safely extracts post ID from callback_data like 'publish_123' or 'change_media_123'."""
+    parts = callback_data.rsplit("_", 1)
     if len(parts) < 2 or not parts[1].isdigit():
         return None
     return int(parts[1])
