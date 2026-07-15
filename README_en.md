@@ -7,3 +7,9 @@
 
 >   **Английская версия будет добавлена в скором времени!**  
 > В данный момент ведется перевод технической документации. Пожалуйста, загляните сюда позже.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
