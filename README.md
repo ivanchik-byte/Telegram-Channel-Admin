@@ -1,4 +1,4 @@
-*English version is available in [README_en.md](README_en.md)*
+*Русская версия доступна в [README_ru.md](README_ru.md)*
 
 # Telegram Channel Admin (AI Moderator)
 
@@ -9,210 +9,210 @@
 [![Redis](https://img.shields.io/badge/Redis-7-red?logo=redis&logoColor=white)](https://redis.io)
 [![OpenAI API](https://img.shields.io/badge/OpenAI-GPT--4o--mini-green?logo=openai&logoColor=white)](https://openai.com)
 
-Бот-помощник для администраторов Telegram-каналов. Он сам собирает новые посты из выбранных каналов-доноров, убирает рекламу и спам, переписывает текст с помощью нейросетей для уникальности и присылает готовый вариант в чат модерации. Чтобы опубликовать пост в свой канал, вам останется только нажать одну кнопку.
+A bot assistant for Telegram channel administrators. It automatically collects new posts from selected donor channels, removes ads and spam, rewrites the text using neural networks for uniqueness, and sends the ready version to the moderation chat. To publish a post to your channel, you just need to click a single button.
 
 ---
 
-## Зачем это нужно
+## Why is this needed
 
-Вести канал и постоянно придумывать уникальный контент сложно и долго. Копировать чужие посты один в один нельзя, это портит охваты и репутацию. Этот бот берет рутину на себя: находит интересные новости у конкурентов, делает качественный рерайт через нейросеть и дает удобно проверить результат перед публикацией.
+Managing a channel and constantly coming up with unique content is difficult and time-consuming. Copying other people's posts one-to-one is not an option, as it ruins your reach and reputation. This bot takes the routine upon itself: it finds interesting news from competitors, does a high-quality rewrite via an AI, and allows you to conveniently review the result before publishing.
 
 ---
 
-## Как устроена система
+## How the system works
 
-Я разделил проект на независимые части, чтобы тяжелые задачи (сбор постов, запросы к ИИ) не тормозили работу бота и базы данных.
+I have divided the project into independent parts so that heavy tasks (collecting posts, requests to AI) do not slow down the bot and the database.
 
 ```mermaid
 flowchart TD
-    Donors["Каналы-доноры (Telegram)"] -->|Сбор постов| Parser["Парсер (Telethon)"]
-    Parser -->|Сохранение постов| DB["База данных (PostgreSQL)"]
-    Parser -->|Добавление задачи| Queue["Очередь задач (Redis + Arq)"]
-    Queue -->|Получение задачи| Worker["Воркер (API ИИ)"]
-    Worker -->|Сохранение рерайта| DB
-    Worker -->|Сигнал о готовности| Bot["Модераторский бот (aiogram)"]
-    Bot -->|Карточка на ревью| ModGroup["Чат модераторов (есть?)"]
-    ModGroup -->|Действие модератора| Bot
-    Bot -->|Обновление статуса| DB
-    Bot -->|Публикация поста| TargetChannel["Целевой канал"]
+    Donors["Donor channels (Telegram)"] -->|Collect posts| Parser["Parser (Telethon)"]
+    Parser -->|Save posts| DB["Database (PostgreSQL)"]
+    Parser -->|Add task| Queue["Task Queue (Redis + Arq)"]
+    Queue -->|Receive task| Worker["Worker (AI API)"]
+    Worker -->|Save rewrite| DB
+    Worker -->|Ready signal| Bot["Moderator Bot (aiogram)"]
+    Bot -->|Card for review| ModGroup["Moderators chat (if any)"]
+    ModGroup -->|Moderator action| Bot
+    Bot -->|Update status| DB
+    Bot -->|Publish post| TargetChannel["Target channel"]
 ```
 
-### Из чего состоит проект
+### What the project consists of
 
-1. **Парсер (Telethon)**: работает как обычный пользователь Telegram (Userbot). Он следит за выбранными каналами и сохраняет новые посты в PostgreSQL. Повторы отсекаются сразу на уровне базы данных через `INSERT ... ON CONFLICT DO NOTHING`.
-2. **Очередь задач (Redis + Arq)**: передает задачи между сервисами. Arq работает быстро и отлично ладит с асинхронным кодом.
-3. **Воркер (Arq + AsyncOpenAI)**: проверяет текст на рекламу по списку стоп-слов. Если все чисто, отправляет текст нейросети. Здесь настроена автоматическая обработка лимитов API (Exponential Backoff), а во время долгих сетевых запросов соединение с базой закрывается, чтобы не тратить ресурсы.
-4. **Бот (aiogram)**: присылает посты модераторам в виде карточек с кнопками. Вы можете опубликовать, отклонить или отредактировать (`/edit`) пост прямо из Telegram. Бот защищен от ситуации, когда два модератора одновременно нажимают на одну кнопку.
+1. **Parser (Telethon)**: works as a regular Telegram user (Userbot). It monitors selected channels and saves new posts to PostgreSQL. Duplicates are immediately discarded at the database level using `INSERT ... ON CONFLICT DO NOTHING`.
+2. **Task Queue (Redis + Arq)**: transfers tasks between services. Arq works fast and gets along perfectly with asynchronous code.
+3. **Worker (Arq + AsyncOpenAI)**: checks text for ads based on a stop-word list. If everything is clean, it sends the text to the neural network. Automatic processing of API limits (Exponential Backoff) is configured here, and during long network requests, the connection to the database is closed so as not to waste resources.
+4. **Bot (aiogram)**: sends posts to moderators in the form of cards with buttons. You can publish, reject, or edit (`/edit`) a post directly from Telegram. The bot is protected against the situation where two moderators simultaneously click the same button.
 
 ---
 
-## Как запустить проект
+## How to start the project
 
-Вся настройка через Docker Compose займет около 10 минут.
+The entire setup via Docker Compose will take about 10 minutes.
 
-### Шаг 1. Получите ключи API
+### Step 1. Get API keys
 
-1. **Telegram API (для парсера)**:
-   - Зайдите на [my.telegram.org](https://my.telegram.org) и войдите под своим номером телефона.
-   - Перейдите в **API development tools**.
-   - Создайте новое приложение (имя и короткое имя могут быть любыми).
-   - Скопируйте `API_ID` (число) и `API_HASH` (строка).
-2. **Токен Telegram-бота (для модерации)**:
-   - Напишите [@BotFather](https://t.me/BotFather) в Telegram.
-   - Создайте бота командой `/newbot` и скопируйте его токен (`TELEGRAM_BOT_TOKEN`).
-3. **API-ключ нейросети**:
-   - Подойдет любой провайдер с OpenAI-совместимым API (сам OpenAI, DeepSeek, OpenRouter, Mistral, локальная модель или прокси). Создайте API-ключ в личном кабинете выбранного провайдера.
+1. **Telegram API (for the parser)**:
+   - Go to [my.telegram.org](https://my.telegram.org) and log in with your phone number.
+   - Go to **API development tools**.
+   - Create a new application (the name and short name can be anything).
+   - Copy the `API_ID` (number) and `API_HASH` (string).
+2. **Telegram bot token (for moderation)**:
+   - Write to [@BotFather](https://t.me/BotFather) on Telegram.
+   - Create a bot with the `/newbot` command and copy its token (`TELEGRAM_BOT_TOKEN`).
+3. **AI API key**:
+   - Any provider with an OpenAI-compatible API (OpenAI itself, DeepSeek, OpenRouter, Mistral, a local model, or a proxy) will work. Create an API key in your account with the chosen provider.
 
-### Шаг 2. Настройте окружение
+### Step 2. Configure the environment
 
-1. Скопируйте шаблон настроек в рабочий файл:
+1. Copy the settings template to the working file:
    ```bash
    cp .env.example .env
    ```
-2. Откройте файл `.env` и укажите свои данные. Параметры в `DATABASE_URL` должны совпадать с `POSTGRES_USER`, `POSTGRES_PASSWORD` и `POSTGRES_DB`.
+2. Open the `.env` file and enter your data. The parameters in `DATABASE_URL` must match `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`.
 
-| Переменная | Что это | Пример |
+| Variable | What it is | Example |
 | :--- | :--- | :--- |
-| `POSTGRES_DB` | Имя базы данных PostgreSQL | `tg_admin` |
-| `POSTGRES_USER` | Пользователь PostgreSQL | `postgres` |
-| `POSTGRES_PASSWORD` | Пароль от PostgreSQL | `secure_password` |
-| `DATABASE_URL` | Ссылка для подключения к БД | `postgresql+asyncpg://postgres:secure_password@db:5432/tg_admin` |
-| `REDIS_URL` | Ссылка для подключения к Redis | `redis://redis:6379/0` |
-| `TELEGRAM_BOT_TOKEN` | Токен вашего бота | `123456:ABC-DEF...` |
-| `ADMIN_IDS` | ID админов через запятую (кто имеет доступ) | `123456789,987654321` |
-| `TARGET_CHANNEL_ID` | ID канала, куда будут идти готовые посты | `-1001234567890` |
-| `MODERATOR_CHAT_ID` | ID группы модераторов. Если оставить пустым, посты пойдут в личку первому админу | `-1001987654321` |
-| `API_ID` | API ID от my.telegram.org | `1234567` |
-| `API_HASH` | API Hash от my.telegram.org | `abcdef0123456789abcdef0123456789` |
-| `CHANNELS_TO_TRACK` | Ссылки или ID каналов-доноров через запятую | `channel1, @channel2, -1001111111` |
-| `AI_API_KEY` | API-ключ провайдера нейросети | `sk-proj-...` или ваш API-ключ |
-| `AI_BASE_URL` | Базовый URL API (оставьте пустым для OpenAI или укажите URL вашего провайдера/прокси) | `https://api.deepseek.com/v1` |
-| `AI_MODEL` | Какую модель использовать для рерайта | `gpt-4o-mini` или `deepseek-chat` |
-| `AD_KEYWORDS` | Стоп-слова для фильтрации рекламы (через запятую) | `реклама, промокод, подписывайтесь` |
-| `OPENAI_EXTRA_BODY` | Дополнительные настройки для нейросети в формате JSON | `{"temperature": 0.7}` |
-| `LANGUAGE` | Язык интерфейса бота (`ru` или `en`) | `ru` |
+| `POSTGRES_DB` | PostgreSQL database name | `tg_admin` |
+| `POSTGRES_USER` | PostgreSQL user | `postgres` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password` |
+| `DATABASE_URL` | Link to connect to the database | `postgresql+asyncpg://postgres:secure_password@db:5432/tg_admin` |
+| `REDIS_URL` | Link to connect to Redis | `redis://redis:6379/0` |
+| `TELEGRAM_BOT_TOKEN` | Your bot's token | `123456:ABC-DEF...` |
+| `ADMIN_IDS` | Comma-separated admin IDs (who has access) | `123456789,987654321` |
+| `TARGET_CHANNEL_ID` | ID of the channel where the ready posts will go | `-1001234567890` |
+| `MODERATOR_CHAT_ID` | Moderator group ID. If left empty, posts will go to the first admin's DMs | `-1001987654321` |
+| `API_ID` | API ID from my.telegram.org | `1234567` |
+| `API_HASH` | API Hash from my.telegram.org | `abcdef0123456789abcdef0123456789` |
+| `CHANNELS_TO_TRACK` | Links or IDs of donor channels separated by commas | `channel1, @channel2, -1001111111` |
+| `AI_API_KEY` | AI provider API key | `sk-proj-...` or your API key |
+| `AI_BASE_URL` | API Base URL (leave empty for OpenAI or specify the URL of your provider/proxy) | `https://api.deepseek.com/v1` |
+| `AI_MODEL` | Which model to use for the rewrite | `gpt-4o-mini` or `deepseek-chat` |
+| `AD_KEYWORDS` | Stop words for ad filtering (comma-separated) | `ad, promo, subscribe` |
+| `OPENAI_EXTRA_BODY` | Additional settings for the AI in JSON format | `{"temperature": 0.7}` |
+| `LANGUAGE` | Bot interface language (currently only `ru` is supported) | `ru` |
 
-### Шаг 3. Настройте промпт для нейросети
+### Step 3. Configure the AI prompt
 
-Перед запуском обязательно подправьте промпт под тематику вашего канала.
+Before starting, be sure to adjust the prompt to suit the theme of your channel.
 
 > [!WARNING]
-> По умолчанию в файле [prompts.py](src/core/prompts.py) прописаны настройки для игровой и технологической тематики (живой разговорный стиль без эмодзи).
-> Отредактируйте переменную `SYSTEM_PROMPT_REWRITE` в файле [src/core/prompts.py](src/core/prompts.py) под себя, иначе бот будет переписывать все посты в геймерском стиле.
+> By default, the [prompts.py](src/core/prompts.py) file contains settings for gaming and tech topics (lively conversational style without emojis).
+> Edit the `SYSTEM_PROMPT_REWRITE` variable in the [src/core/prompts.py](src/core/prompts.py) file for yourself, otherwise the bot will rewrite all posts in a gamer style.
 
-### Шаг 4. Авторизуйте парсер в Telegram
+### Step 4. Authorize the parser in Telegram
 
-Парсер работает через сессию Telethon. Нужно один раз войти в аккаунт, чтобы бот мог читать каналы без постоянного ввода СМС-кодов.
+The parser works via a Telethon session. You need to log into the account once so the bot can read channels without constantly entering SMS codes.
 
-1. Запустите базу данных и Redis:
+1. Start the database and Redis:
    ```bash
    docker compose up -d redis db
    ```
-2. Запустите скрипт авторизации:
+2. Run the authorization script:
    ```bash
    docker compose run --rm parser python src/login.py
    ```
-3. Введите номер телефона аккаунта (например, `+79991234567`) и код подтверждения, который придет вам в Telegram.
-4. После этого в папке `data/` появится файл `anon.session`. Теперь бот может работать самостоятельно.
+3. Enter the account phone number (e.g., `+79991234567`) and the verification code that will be sent to you in Telegram.
+4. After this, an `anon.session` file will appear in the `data/` folder. Now the bot can work on its own.
 
-### Шаг 5. Полный запуск
+### Step 5. Full launch
 
-Запустите проект одной командой. Сервис миграций применит изменения в БД и отключится, а остальные сервисы останутся работать в фоне.
+Launch the project with a single command. The migrations service will apply changes to the database and shut down, while the rest of the services will continue working in the background.
 
 ```bash
 docker compose up -d --build
 ```
 
-#### Полезные команды для работы:
+#### Useful commands for work:
 
-* Посмотреть статус контейнеров:
+* View the status of containers:
   ```bash
   docker compose ps
   ```
-* Посмотреть логи всех сервисов:
+* View the logs of all services:
   ```bash
   docker compose logs -f
   ```
-* Посмотреть логи конкретного сервиса (например, воркера):
+* View the logs of a specific service (e.g., the worker):
   ```bash
   docker compose logs -f worker
   ```
-* Остановить проект:
+* Stop the project:
   ```bash
   docker compose down
   ```
-* Остановить проект и полностью сбросить базу данных:
+* Stop the project and completely reset the database:
   ```bash
   docker compose down -v
   ```
 
 ---
 
-## Как управлять ботом
+## How to manage the bot
 
-Вы можете полностью контролировать сбор, интервалы и очереди прямо через чат с ботом.
+You can fully control the collection, intervals, and queues directly via the chat with the bot.
 
-### Главные особенности
+### Main features
 
-* **Защита от завала**: В обычном режиме (`auto`) бот показывает на модерацию только один пост. Еще 5 могут ждать в очереди. Если очередь забита, парсер временно перестает собирать новые посты.
-* **Интервалы**: Посты не приходят все сразу. Установите задержку, и бот будет выдерживать паузу перед отправкой следующей карточки.
-* **Пауза**: Сбор постов можно временно приостановить.
-* **Кураторский режим**: Бот может просто копить посты без рерайта. По вашей команде ИИ выберет лучшие новости за указанное время, а остальное удалит.
+* **Spam protection**: In normal (`auto`) mode, the bot shows only one post for moderation. Another 5 can wait in the queue. If the queue is full, the parser temporarily stops collecting new posts.
+* **Intervals**: Posts do not arrive all at once. Set a delay, and the bot will pause before sending the next card.
+* **Pause**: Post collection can be temporarily suspended.
+* **Curation mode**: The bot can simply accumulate posts without rewriting. Upon your command, the AI will select the best news for a specified time, and delete the rest.
 
-### Команды бота
+### Bot commands
 
-Отправляйте эти команды в чат модерации или в личку боту.
+Send these commands in the moderation chat or in DMs to the bot.
 
-#### Режимы
-* `/mode auto` — включить обычный автоматический режим.
-* `/mode curation` — включить кураторский режим (сбор постов в накопитель).
+#### Modes
+* `/mode auto` — enable normal automatic mode.
+* `/mode curation` — enable curation mode (collecting posts into an accumulator).
 
-#### Кураторство и сбор
-* `/best` — выбрать до 6 лучших постов за последние 24 часа. Один сразу пойдет на проверку, остальные встанут в очередь. Лишние посты удалятся. Сбрасывает текущие интервалы.
-* `/best 24h` (можно указать время, например `30m` или `2d`) — отбор лучших за указанный период.
-* `/parse [время или количество],[количество каналов]` — запустить сбор вручную.
-  * `/parse 24h,5` — собрать посты за последние сутки с 5 случайных каналов-доноров.
-  * `/parse 10,2` — собрать по 10 последних постов с 2 случайных каналов.
-  * `/parse 5` — собрать по 5 последних постов со всех каналов.
-* `/mod` (или `/moderation`) — запросить старейший пост на проверку.
-* Кнопка **Модерация** — взять пост на проверку.
-* Кнопка **Очистить все** — очистить очередь, текущую карточку и накопитель.
+#### Curation and collection
+* `/best` — select up to 6 best posts over the last 24 hours. One will immediately go for review, the rest will stand in the queue. Excess posts will be deleted. Resets current intervals.
+* `/best 24h` (you can specify time, e.g., `30m` or `2d`) — select the best for the specified period.
+* `/parse [time or amount],[number of channels]` — manually start collection.
+  * `/parse 24h,5` — collect posts for the last 24 hours from 5 random donor channels.
+  * `/parse 10,2` — collect 10 latest posts from 2 random channels.
+  * `/parse 5` — collect 5 latest posts from all channels.
+* `/mod` (or `/moderation`) — request the oldest post for review.
+* **Moderation** button — take a post for review.
+* **Clear all** button — clear the queue, the current card, and the accumulator.
 
-#### Интервалы
-* `/interval 20-50` — случайная пауза от 20 до 50 секунд перед следующим постом.
-* `/interval 30` — фиксированная пауза в 30 секунд.
-* `/interval 5m` — фиксированная пауза в 5 минут (можно использовать буквы s, m, h, d).
-* `/interval 0` — присылать посты без задержек (по мере обработки ИИ).
+#### Intervals
+* `/interval 20-50` — random pause from 20 to 50 seconds before the next post.
+* `/interval 30` — fixed pause of 30 seconds.
+* `/interval 5m` — fixed pause of 5 minutes (you can use letters s, m, h, d).
+* `/interval 0` — send posts without delays (as processed by AI).
 
-#### Пауза и статус
-* `/pause` — остановить парсер до ручного включения.
-* `/pause 8h` — остановить парсер на 8 часов.
-* `/resume` — продолжить сбор постов.
-* `/status` — открыть панель управления с быстрыми кнопками.
-* `/help` — показать справку по командам.
-* `/clear` — удалить посты на модерации и очистить накопитель.
-* `/clear_db` — полностью очистить базу данных.
-* `/queue [число]` — изменить лимит очереди (по умолчанию 5).
+#### Pause and status
+* `/pause` — stop the parser until manually turned back on.
+* `/pause 8h` — stop the parser for 8 hours.
+* `/resume` — resume post collection.
+* `/status` — open the control panel with quick buttons.
+* `/help` — show help on commands.
+* `/clear` — delete posts under moderation and clear the accumulator.
+* `/clear_db` — completely clear the database.
+* `/queue [number]` — change the queue limit (default is 5).
 
-#### Дополнительные фичи
-* **Дублирование карточек**: Если вы настроили чат модерации (`MODERATOR_CHAT_ID`), бот все равно будет дублировать посты в личку первому администратору (`ADMIN_IDS`). Можно принимать решения из любого чата.
-* **Кто опубликовал**: Когда модератор нажимает кнопку, бот пишет внизу карточки: `Действие от: @username`. Сразу видно, кто принял решение.
-* **Сброс интервала**: Кнопка «Сбросить интервал» в панели статуса позволяет мгновенно прислать все посты из очереди без ожидания.
-* **Ручные посты**: Отправьте боту любой текст или медиафайл напрямую в чат с ботом без команд. Бот воспримет это как ручной пост, скачает файлы, сделает рерайт через ИИ и пришлет готовую карточку на проверку.
+#### Additional features
+* **Card duplication**: If you configured a moderation chat (`MODERATOR_CHAT_ID`), the bot will still duplicate posts in DMs to the first administrator (`ADMIN_IDS`). You can make decisions from any chat.
+* **Who published**: When a moderator presses a button, the bot writes at the bottom of the card: `Action by: @username`. It's immediately clear who made the decision.
+* **Reset interval**: The "Reset interval" button in the status panel allows you to instantly send all posts from the queue without waiting.
+* **Manual posts**: Send the bot any text or media file directly in the chat with the bot without commands. The bot will perceive this as a manual post, download the files, do a rewrite via AI, and send a ready card for review.
 
 > [!TIP]
-> В командах времени можно использовать буквы: `s` (секунды), `m` (минуты), `h` (часы), `d` (дни). Если букву не написать, бот посчитает время в секундах.
+> In time commands, you can use letters: `s` (seconds), `m` (minutes), `h` (hours), `d` (days). If you don't write a letter, the bot will count the time in seconds.
 
 ---
 
-## Безопасность
+## Security
 
-* **Защита настроек**: Файлы `.env` и папка `data/` с сессиями добавлены в `.gitignore`, чтобы вы случайно не выложили их в открытый доступ.
-* **Доступ**: Бот реагирует только на пользователей из списка `ADMIN_IDS`. Посторонние люди не смогут им управлять.
-* **Надежность**: Задачи в очереди сохраняются в Redis, так что при перезапуске контейнеров ничего не потеряется. База данных защищена от блокировок во время долгих запросов к ИИ.
+* **Settings protection**: The `.env` file and the `data/` folder with sessions are added to `.gitignore` so that you don't accidentally expose them to the public.
+* **Access**: The bot responds only to users from the `ADMIN_IDS` list. Unauthorized people will not be able to manage it.
+* **Reliability**: Queue tasks are saved in Redis, so nothing will be lost when containers are restarted. The database is protected from deadlocks during long requests to the AI.
 
 ---
 
-## Лицензия
+## License
 
-Этот проект распространяется под лицензией MIT. Подробности см. в файле [LICENSE](LICENSE).
+This project is licensed under the MIT License. For details, see the [LICENSE](LICENSE) file.
