@@ -13,9 +13,9 @@ data/
 *.session-journal
 *.md
 !README.md
-!README_en.md
+!README_ru.md
 !COMMANDS.md
-!COMMANDS_en.md
+!COMMANDS_ru.md
 .idea/
 .vscode/
 

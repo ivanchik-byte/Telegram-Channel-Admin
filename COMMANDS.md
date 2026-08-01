@@ -1,71 +1,71 @@
-# Управление конвейером (Docker Compose)
+# Pipeline Management (Docker Compose)
 
-Этот документ содержит справочник команд для администрирования бота, воркера, парсера и базы данных. 
+This document contains a command reference for administering the bot, worker, parser, and database.
 
-**Важно:** Все приведенные команды должны выполняться из корневой директории проекта, в которой расположен файл `docker-compose.yml`.
+**Important:** All the following commands must be executed from the project's root directory, where the `docker-compose.yml` file is located.
 
-## Основные команды запуска
+## Basic Startup Commands
 
-### Полный перезапуск с пересборкой
-Используйте эту команду после изменения исходного кода (`.py`) или обновления списка зависимостей, чтобы изменения вступили в силу:
+### Full Restart with Rebuild
+Use this command after changing the source code (`.py`) or updating the list of dependencies for the changes to take effect:
 ```bash
 docker compose down
 docker compose up -d --build
 ```
 
-Если Docker закэшировал старую версию кода и изменения не применились, используйте сборку без кэша:
+If Docker cached an old version of the code and the changes were not applied, use the build without cache:
 ```bash
 docker compose build --no-cache
 docker compose up -d
 ```
 
-### Быстрый запуск
-Используется для стандартного старта системы, когда исходный код не менялся:
+### Quick Start
+Used for standard system startup when the source code has not changed:
 ```bash
 docker compose up -d
 ```
 
-### Авторизация парсера
-Разовая операция для генерации файла `anon.session`, необходимого для работы Telethon (потребуется ввести номер телефона и код подтверждения из Telegram):
+### Parser Authorization
+A one-time operation to generate the `anon.session` file required for Telethon to work (you will need to enter your phone number and verification code from Telegram):
 ```bash
 docker compose up -d redis db
 docker compose run --rm parser python src/login.py
 ```
 
-## Мониторинг и логирование
+## Monitoring and Logging
 
-### Проверка статуса контейнеров
-Команда выводит список всех контейнеров проекта и их текущее состояние:
+### Check Container Status
+This command outputs a list of all project containers and their current state:
 ```bash
 docker compose ps
 ```
 
-### Чтение общих логов в реальном времени
-Выводит агрегированные логи от всех запущенных микросервисов. Для выхода нажмите `Ctrl+C`:
+### Read General Logs in Real Time
+Outputs aggregated logs from all running microservices. Press `Ctrl+C` to exit:
 ```bash
 docker compose logs -f
 ```
 
-### Логирование отдельных микросервисов
-Команды для изолированного просмотра логов конкретных компонентов системы:
+### Logging Individual Microservices
+Commands for isolated viewing of logs of specific system components:
 ```bash
-docker compose logs -f bot      # Логи модераторского интерфейса и обработки команд
-docker compose logs -f worker   # Логи ИИ-рерайтера и вызовов внешнего API
-docker compose logs -f parser   # Логи процесса захвата новых сообщений из каналов
-docker compose logs -f db       # Системные логи СУБД PostgreSQL
+docker compose logs -f bot      # Moderation interface and command processing logs
+docker compose logs -f worker   # AI rewriter and external API call logs
+docker compose logs -f parser   # Logs for the process of capturing new messages from channels
+docker compose logs -f db       # PostgreSQL DBMS system logs
 ```
 
-## Остановка и сброс
+## Stop and Reset
 
-### Безопасная остановка системы
-Штатная остановка всех процессов. База данных и очередь задач в Redis сохраняются:
+### Safe System Stop
+Graceful shutdown of all processes. The database and task queue in Redis are preserved:
 ```bash
 docker compose down
 ```
 
-### Полный сброс (Hard Reset)
-**Внимание:** Команда полностью останавливает систему и удаляет все данные (базу данных PostgreSQL и кэш Redis). Файл сессии `anon.session` при этом не удаляется.
-Используйте только в том случае, если необходимо полностью очистить историю обработанных постов.
+### Hard Reset
+**Warning:** This command completely stops the system and deletes all data (the PostgreSQL database and Redis cache). The session file `anon.session` is not deleted.
+Use it only if you need to completely clear the history of processed posts.
 ```bash
 docker compose down -v
 ```
