@@ -3,6 +3,7 @@ import asyncio
 from telethon import TelegramClient, events
 from src.core.config import settings
 from src.core.logger import logger
+from src.core.i18n import i18n
 from src.parser.handlers import new_message_handler
 
 from arq import create_pool
@@ -103,7 +104,7 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     try:
                         async with httpx.AsyncClient() as http_client:
                             url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage"
-                            text = f"Ручной парсинг успешно завершен. Импортировано новых уникальных постов: {parsed_count}."
+                            text = i18n.get('parse_done', count=parsed_count)
                             for cid in set(chat_ids):
                                 if cid:
                                     await http_client.post(url, json={

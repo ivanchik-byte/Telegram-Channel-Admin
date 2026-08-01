@@ -3,6 +3,7 @@ import re
 from html import escape
 from telethon import events
 from src.core.logger import logger
+from src.core.i18n import i18n
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository, SettingsRepository
 from datetime import datetime, timezone
@@ -37,13 +38,13 @@ async def new_message_handler(event: events.NewMessage.Event):
     text = event.message.message or ""
 
     if not text.strip():
-        logger.info("[Parser] Получен пустой медиа-пост без текста. Игнорируем.")
+        logger.info("[Parser] Received empty media post without text. Ignoring.")
         return
 
     channel_id = event.chat_id
     message_id = event.id
     
-    # Извлечение скрытых ссылок
+    # Extract hidden links
     links = []
     if event.message.entities:
         from telethon.tl.types import MessageEntityTextUrl
@@ -53,7 +54,7 @@ async def new_message_handler(event: events.NewMessage.Event):
     
     if links:
         unique_links = list(set(links))
-        text += "\n\nСкрытые ссылки из поста:\n" + "\n".join(unique_links)
+        text += f"\n\n{i18n.get('parser_hidden_links')}\n" + "\n".join(unique_links)
         
     post_hash = calculate_post_hash(text)
     source_link = get_telegram_link(event)
@@ -63,7 +64,7 @@ async def new_message_handler(event: events.NewMessage.Event):
         
         # Check global pause
         if settings.pause_until and settings.pause_until > datetime.now(timezone.utc):
-            logger.info(f"[Parser] Бот на паузе до {settings.pause_until}. Игнорируем пост.")
+            logger.info(f"[Parser] Bot is paused until {settings.pause_until}. Ignoring post.")
             return
 
         mode = settings.mode
@@ -71,13 +72,13 @@ async def new_message_handler(event: events.NewMessage.Event):
         # Check advertising
         from src.worker.tasks import contains_ad
         if contains_ad(text):
-            logger.info(f"[Parser] Пост {message_id} из {channel_id} отфильтрован как реклама на этапе парсинга.")
+            logger.info(f"[Parser] Post {message_id} from {channel_id} filtered as ad during parsing.")
             initial_status = 'filtered_ad'
         elif mode == 'auto':
             # Check limits
             mod_count, queued_count = await PostRepository.get_queue_counts(session)
             if mod_count >= 1 and queued_count >= settings.queue_limit:
-                logger.info(f"[Parser] Очередь переполнена (1 на модерации, {settings.queue_limit} в очереди). Игнорируем пост {message_id}.")
+                logger.info(f"[Parser] Queue is full (1 in moderation, {settings.queue_limit} in queue). Ignoring post {message_id}.")
                 return
             initial_status = 'queued'
         else:
@@ -98,12 +99,12 @@ async def new_message_handler(event: events.NewMessage.Event):
         if media_type:
             import os
             os.makedirs('data/media', exist_ok=True)
-            logger.info(f"[Parser] Скачивание медиа ({media_type}) для поста {message_id}...")
+            logger.info(f"[Parser] Downloading media ({media_type}) for post {message_id}...")
             try:
                 media_path = await event.message.download_media(file='data/media/')
-                logger.info(f"[Parser] Медиа сохранено: {media_path}")
+                logger.info(f"[Parser] Media saved: {media_path}")
             except Exception as e:
-                logger.error(f"[Parser] Ошибка при скачивании медиа для поста {message_id}: {e}")
+                logger.error(f"[Parser] Error downloading media for post {message_id}: {e}")
                 media_path = None
                 media_type = None
 
@@ -111,7 +112,7 @@ async def new_message_handler(event: events.NewMessage.Event):
         if initial_status == 'queued':
             mod_count, queued_count = await PostRepository.get_queue_counts(session)
             if mod_count >= 1 and queued_count >= settings.queue_limit:
-                logger.info(f"[Parser] Очередь переполнена перед сохранением (1 на модерации, {settings.queue_limit} в очереди). Игнорируем пост {message_id}.")
+                logger.info(f"[Parser] Queue is full before saving (1 in moderation, {settings.queue_limit} in queue). Ignoring post {message_id}.")
                 if media_path:
                     try:
                         import os
@@ -135,7 +136,7 @@ async def new_message_handler(event: events.NewMessage.Event):
         if not post_id:
             return None
 
-    logger.info(f"[Parser] Перехвачен новый пост из {channel_id}. Хэш: {post_hash}. Сохранен со статусом: {initial_status}.")
+    logger.info(f"[Parser] Intercepted new post from {channel_id}. Hash: {post_hash}. Saved with status: {initial_status}.")
 
     if initial_status == 'queued':
         # Enqueue to Arq
@@ -143,7 +144,7 @@ async def new_message_handler(event: events.NewMessage.Event):
         try:
             await pool.enqueue_job('process_post_task', post_id)
         except Exception as e:
-            logger.error(f"[Parser] Ошибка отправки в Redis (Arq): {e}. Пост {post_id} помечен как failed.")
+            logger.error(f"[Parser] Error sending to Redis (Arq): {e}. Post {post_id} marked as failed.")
             async with async_session_maker() as rollback_session:
                 await PostRepository.update_status(rollback_session, post_id, 'failed')
     return post_id
