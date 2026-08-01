@@ -34,8 +34,8 @@ def contains_ad(text: str) -> bool:
 
 async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None, source_link: str | None = None):
     """
-    Отправляет карточку модерации. 
-    Использует общую логику send_mod_card_to_chat из bot/handlers.
+    Sends moderation card. 
+    Uses the common logic send_mod_card_to_chat from bot/handlers.
     """
     from src.bot.handlers import send_mod_card_to_chat
     
@@ -57,8 +57,12 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
         logger.error(f"[Worker] Ошибка при отправке карточки модерации: {e}")
 
 
-async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> str | None:
+async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, system_prompt: str | None = None) -> str | None:
     """AI rewrite with exponential backoff. Returns rewritten text or None on failure."""
+    if not system_prompt:
+        from src.core.prompts import SYSTEM_PROMPT_REWRITE
+        system_prompt = SYSTEM_PROMPT_REWRITE
+
     backoff_delays = [2, 4, 8, 16, 32]
 
     for attempt, delay in enumerate(backoff_delays):
@@ -66,12 +70,13 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int) -> s
             response = await client.chat.completions.create(
                 model=settings.AI_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT_REWRITE},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text}
                 ],
                 extra_body=settings.AI_EXTRA_BODY or {}
             )
             return response.choices[0].message.content.strip()
+
 
         except APIStatusError as e:
             if e.status_code == 429 or (500 <= e.status_code < 600):
@@ -118,17 +123,17 @@ async def process_post_task(ctx, post_id: int):
             logger.info(f"[Worker] Пост {post_id} не найден, не в статусе queued или не содержит текста. Игнорируем.")
             return
 
-        settings = await SettingsRepository.get_settings(session)
+        settings_obj = await SettingsRepository.get_settings(session)
         now = datetime.now(timezone.utc)
 
         # Check global pause
-        if settings.pause_until and settings.pause_until > now:
-            logger.debug(f"[Worker] Бот на паузе до {settings.pause_until}. Откладываем пост {post_id} на 60 сек.")
+        if settings_obj.pause_until and settings_obj.pause_until > now:
+            logger.debug(f"[Worker] Бот на паузе до {settings_obj.pause_until}. Откладываем пост {post_id} на 60 сек.")
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
             return
 
-        if settings.next_post_time and settings.next_post_time > now:
-            delay = (settings.next_post_time - now).total_seconds()
+        if settings_obj.next_post_time and settings_obj.next_post_time > now:
+            delay = (settings_obj.next_post_time - now).total_seconds()
             jitter = random.uniform(1.0, 5.0)
             defer_sec = delay + jitter
             logger.info(f"[Worker] Интервал не прошел. Откладываем пост {post_id} на {defer_sec:.1f} сек.")
@@ -137,12 +142,12 @@ async def process_post_task(ctx, post_id: int):
 
         # Check moderation limits
         mod_count, queued_count = await PostRepository.get_queue_counts(session)
-        if settings.mode == 'auto' and mod_count >= 1:
+        if settings_obj.mode == 'auto' and mod_count >= 1:
             logger.info(f"[Worker] В авторежиме уже есть пост на модерации. Откладываем пост {post_id} на 60 сек.")
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
             return
 
-        # Резервируем пост атомарно
+        # Reserve post atomically
         post = await PostRepository.atomic_status_update(session, post_id, 'queued', 'ai_processing')
         if not post:
             logger.info(f"[Worker] Пост {post_id} перехвачен другим воркером или изменил статус.")
@@ -154,7 +159,7 @@ async def process_post_task(ctx, post_id: int):
         post_media_type = post.media_type
         post_source_link = post.source_link
 
-        # Дедупликация: ищем ранее добавленный пост с тем же хэшем
+        # Deduplication: search for a previously added post with the same hash
         duplicate_check_stmt = select(ProcessedPost).where(
             ProcessedPost.post_hash == post.post_hash,
             ProcessedPost.id < post.id
@@ -164,7 +169,7 @@ async def process_post_task(ctx, post_id: int):
         if is_duplicate:
             logger.info(f"[Worker] Пост {post_id} определен как дубликат.")
 
-            # Ищем оригинал с уже готовым rewritten_text
+            # Search for the original with already prepared rewritten_text
             orig_stmt = select(ProcessedPost).where(
                 ProcessedPost.post_hash == post.post_hash,
                 ProcessedPost.id != post.id,
@@ -174,7 +179,7 @@ async def process_post_task(ctx, post_id: int):
             orig_post = orig_result.scalars().first()
 
             if not orig_post:
-                # Оригинал ещё обрабатывается — проверяем, существует ли он вообще
+                # Original is still processing — check if it exists at all
                 any_orig_stmt = select(ProcessedPost).where(
                     ProcessedPost.post_hash == post.post_hash,
                     ProcessedPost.id != post.id
@@ -202,14 +207,14 @@ async def process_post_task(ctx, post_id: int):
                     await PostRepository.update_status(session, post_id, 'failed')
                     return
 
-            # Копируем rewritten_text и сразу переводим в 'moderating'
+            # Copy rewritten_text and immediately move to 'moderating'
             await PostRepository.update_post_ready_for_moderation(session, post_id, orig_post.rewritten_text)
             logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст из поста {orig_post.id}.")
             duplicate_rewritten_text = orig_post.rewritten_text
             is_duplicate_ready = True
 
         else:
-            # Фильтрация рекламы
+            # Ad filtering
             if contains_ad(post_text):
                 logger.info(f"[Worker] Пост {post_id} отфильтрован как реклама.")
                 await PostRepository.update_status(
@@ -219,17 +224,22 @@ async def process_post_task(ctx, post_id: int):
 
             logger.info(f"[Worker] Пост {post_id} отправлен на AI-рерайт.")
 
-    # Сессия закрыта — теперь безопасно делать долгие сетевые вызовы
+        post_lang = getattr(settings_obj, 'post_lang', 'ru')
+
+    # Session closed - now safe to make long network calls
 
     if is_duplicate_ready:
         await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text, post_media_path, post_media_type, post_source_link)
         return
 
-    # --- Шаг 2: AI-рерайт — БД-сессия закрыта ---
+    # --- Step 2: AI-rewrite — DB session closed ---
+    from src.core.prompts import get_system_prompt
     client: AsyncOpenAI = ctx['ai_client']
-    rewritten_text = await _call_ai_with_retry(client, post_text, post_id)
+    sys_prompt = get_system_prompt(post_lang)
+    rewritten_text = await _call_ai_with_retry(client, post_text, post_id, system_prompt=sys_prompt)
 
-    # --- Шаг 3: Финализация — новая сессия ---
+
+    # --- Step 3: Finalization — new session ---
     async with async_session_maker() as session:
         if rewritten_text:
             success = await PostRepository.update_post_ready_for_moderation(
@@ -249,7 +259,7 @@ async def process_post_task(ctx, post_id: int):
     if rewritten_text:
         await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type, post_source_link)
         
-        # Обновляем next_post_time после успешной отправки
+        # Update next_post_time after successful send
 
 
 async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = None):
@@ -269,12 +279,15 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         if not posts:
             logger.info("[Worker] Нет постов для выбора.")
             from src.bot.handlers import send_notification_to_all
-            await send_notification_to_all(ctx['bot'], f"Нет накопленных постов за последние {hours}ч.", requester_chat_id=requester_chat_id)
+            await send_notification_to_all(ctx['bot'], i18n.get('worker_no_posts', hours=hours), requester_chat_id=requester_chat_id)
             return
 
         post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
         
-    prompt = "Ниже список постов. Выбери до 6 самых интересных, виральных и полезных постов. Верни ТОЛЬКО их числовые ID через запятую, без лишних слов, в порядке убывания интересности (самый крутой - первый).\n\n" + str(post_data)
+    if getattr(settings, 'LANGUAGE', 'ru') == 'en':
+        prompt = "Below is a list of posts. Choose up to 6 of the most interesting, viral, and useful posts. Return ONLY their numerical IDs comma-separated, without extra words, in descending order of interest (most awesome first).\n\n" + str(post_data)
+    else:
+        prompt = "Ниже список постов. Выбери до 6 самых интересных, виральных и полезных постов. Верни ТОЛЬКО их числовые ID через запятую, без лишних слов, в порядке убывания интересности (самый крутой - первый).\n\n" + str(post_data)
     
     client: AsyncOpenAI = ctx['ai_client']
     try:
@@ -308,7 +321,13 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
             
     if best_post:
         from src.worker.tasks import _call_ai_with_retry
-        rewritten = await _call_ai_with_retry(client, best_post.text, best_post.id)
+        from src.core.prompts import get_system_prompt
+        async with async_session_maker() as session:
+            best_settings = await SettingsRepository.get_settings(session)
+            best_post_lang = getattr(best_settings, 'post_lang', 'ru')
+        best_sys_prompt = get_system_prompt(best_post_lang)
+        rewritten = await _call_ai_with_retry(client, best_post.text, best_post.id, system_prompt=best_sys_prompt)
+
         if rewritten:
             async with async_session_maker() as session:
                 await PostRepository.update_post_ready_for_moderation(session, best_post.id, rewritten)
@@ -332,7 +351,7 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         from src.bot.handlers import send_notification_to_all
         await send_notification_to_all(
             ctx['bot'], 
-            f"Выбрано {len(best_ids)} постов из {len(posts)} кандидатов. Лучший пост сразу отправлен на модерацию, остальные {len(other_best_ids)} добавлены в очередь.", 
+            i18n.get('worker_best_selected', selected=len(best_ids), total=len(posts), queued=len(other_best_ids)), 
             requester_chat_id=requester_chat_id
         )
 

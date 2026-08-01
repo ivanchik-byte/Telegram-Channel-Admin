@@ -27,9 +27,11 @@ def parse_time_suffix(time_str: str) -> timedelta | None:
 
 
 def format_seconds_readable(seconds: int) -> str:
-    """Formats a number of seconds into a human-readable string (e.g. '20 мин. 30 сек.')."""
+    """Formats a number of seconds into a human-readable string using i18n time units."""
+    from src.core.i18n import i18n
+
     if seconds == 0:
-        return "0 сек."
+        return f"0 {i18n.get('time_seconds')}"
         
     days = seconds // 86400
     seconds %= 86400
@@ -40,13 +42,13 @@ def format_seconds_readable(seconds: int) -> str:
     
     parts = []
     if days > 0:
-        parts.append(f"{days} д.")
+        parts.append(f"{days} {i18n.get('time_days')}")
     if hours > 0:
-        parts.append(f"{hours} ч.")
+        parts.append(f"{hours} {i18n.get('time_hours')}")
     if minutes > 0:
-        parts.append(f"{minutes} мин.")
+        parts.append(f"{minutes} {i18n.get('time_minutes')}")
     if secs > 0 or not parts:
-        parts.append(f"{secs} сек.")
+        parts.append(f"{secs} {i18n.get('time_seconds')}")
         
     return " ".join(parts)
 

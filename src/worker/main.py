@@ -34,6 +34,6 @@ class WorkerSettings:
     ]
     on_startup = startup
     on_shutdown = shutdown
-    max_tries = 5       # максимум попыток для каждой задачи
-    job_timeout = 300   # 5 минут — таймаут на одну задачу
+    max_tries = 5       # max retries per task
+    job_timeout = 300   # 5 minutes — timeout per task
     redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
