@@ -48,6 +48,7 @@ An asynchronous, microservice-based content pipeline and AI moderator bot for Te
 - [Production Deployment & Best Practices](#production-deployment--best-practices)
 - [Security Considerations](#security-considerations)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
+- [Contacts & Author](#contacts--author)
 - [License](#license)
 
 ---
@@ -695,6 +696,13 @@ gunzip < /backups/tg_admin_2026-08-17.sql.gz | docker compose exec -T db psql -U
 ### 5. Containers fail to connect to database
 - **Cause**: `db` service healthcheck has not yet transitioned to healthy.
 - **Solution**: Ensure your `docker-compose.yml` uses `depends_on` with `condition: service_healthy`. Check PostgreSQL logs using `docker compose logs db`.
+
+---
+
+## Contacts & Author
+
+- Telegram Channel: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)
+- Telegram Direct: [t.me/ivanchikbyte](https://t.me/ivanchikbyte)
 
 ---
 
