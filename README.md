@@ -1,4 +1,4 @@
-*Russian version available in [README_ru.md](README_ru.md)*
+*Русская версия доступна вот тут [README_ru.md](README_ru.md)*
 
 # Telegram Channel Admin (AI Moderator & Content Curator)
 
