@@ -1,4 +1,4 @@
-*English version is available in [README.md](README.md)*
+*English version is available in [README.md](README.md) | Канал автора: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)*
 
 # Telegram Channel Admin (ИИ-Модератор и Куратор Контента)
 
@@ -8,6 +8,8 @@
 [![Telethon](https://img.shields.io/badge/Telethon-1.35-2CA5E0?logo=telegram&logoColor=white)](https://github.com/LonamiWebs/Telethon)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io)
+[![Telegram Channel](https://img.shields.io/badge/Канал-@ivanchik__byte-2CA5E0?logo=telegram&logoColor=white)](https://t.me/ivanchik_byte)
+[![Author](https://img.shields.io/badge/Автор-@ivanchikbyte-2CA5E0?logo=telegram&logoColor=white)](https://t.me/ivanchikbyte)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Асинхронный микросервисный контент-пайплайн и Telegram-бот для администраторов каналов. Система автоматически отслеживает каналы-доноры, фильтрует рекламу, генерирует уникальный рерайт через нейросеть (OpenAI, DeepSeek или любой совместимый API) и присылает карточки модерации для публикации, отклонения или правки в один клик.

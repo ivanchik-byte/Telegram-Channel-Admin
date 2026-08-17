@@ -1,4 +1,4 @@
-*Русская версия доступна вот тут [README_ru.md](README_ru.md)*
+*Russian version available in [README_ru.md](README_ru.md) | Author's Channel: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)*
 
 # Telegram Channel Admin (AI Moderator & Content Curator)
 
@@ -8,6 +8,8 @@
 [![Telethon](https://img.shields.io/badge/Telethon-1.35-2CA5E0?logo=telegram&logoColor=white)](https://github.com/LonamiWebs/Telethon)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io)
+[![Telegram Channel](https://img.shields.io/badge/Channel-@ivanchik__byte-2CA5E0?logo=telegram&logoColor=white)](https://t.me/ivanchik_byte)
+[![Author](https://img.shields.io/badge/Author-@ivanchikbyte-2CA5E0?logo=telegram&logoColor=white)](https://t.me/ivanchikbyte)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An asynchronous microservice pipeline and Telegram bot for channel administrators. It automatically monitors donor channels, filters out ads, generates unique rewrites using AI (OpenAI, DeepSeek, or any compatible API), and delivers interactive moderation cards to publish, reject, or edit posts in one click.
