@@ -16,6 +16,7 @@ if not API_ID or not API_HASH:
 SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'anon')
 
 def main():
+    os.makedirs(os.path.dirname(SESSION_FILE), exist_ok=True)
     print(f"Creating session at: {SESSION_FILE}.session")
     with TelegramClient(SESSION_FILE, API_ID, API_HASH) as client:
         print("Logged in successfully! The session file has been created.")

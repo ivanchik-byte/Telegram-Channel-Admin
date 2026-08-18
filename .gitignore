@@ -8,7 +8,9 @@ __pycache__/
 env/
 venv/
 .venv/
-data/
+data/*
+!data/.gitkeep
+!data/media/.gitkeep
 *.session
 *.session-journal
 *.md
@@ -18,4 +20,3 @@ data/
 !COMMANDS_ru.md
 .idea/
 .vscode/
-

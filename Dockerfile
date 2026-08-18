@@ -25,10 +25,6 @@ RUN pip install --no-cache /wheels/*
 
 COPY . .
 
-# Change ownership of data directory (if it exists or will be mounted, it might be overwritten by volume, 
-# but we do it anyway for local fallback)
-RUN chown -R appuser:appgroup /app
-
-USER appuser
+RUN mkdir -p /app/data/media
 
 # Entrypoint will be defined in docker-compose.yml
