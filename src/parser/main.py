@@ -144,7 +144,12 @@ async def main():
     )
 
     logger.info("Starting Telegram parser client...")
-    await client.start()
+    await client.connect()
+    if not await client.is_user_authorized():
+        logger.error("Telegram session is not authorized! Please login first by running: docker compose run --rm parser python src/login.py")
+        await asyncio.sleep(30)
+        return
+
     logger.info(f"Parser is running and tracking channels: {channels}")
     
     client.loop.create_task(check_force_parse(client, channels))
