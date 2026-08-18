@@ -79,37 +79,35 @@ cp .env.example .env
 Open `.env` and fill in your credentials:
 
 ```ini
-# PostgreSQL Database
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_secure_password
-POSTGRES_DB=tg_admin
-DATABASE_URL=postgresql+asyncpg://postgres:your_secure_password@db:5432/tg_admin
+# --- PostgreSQL Database ---
+POSTGRES_USER=postgres                                                     # DB username for PostgreSQL container
+POSTGRES_PASSWORD=your_secure_password                                     # DB password
+POSTGRES_DB=tg_admin                                                       # DB name for storing posts and settings
+DATABASE_URL=postgresql+asyncpg://postgres:your_secure_password@db:5432/tg_admin # Async connection string (asyncpg)
 
-# Redis
-REDIS_URL=redis://redis:6379/0
+# --- Redis Cache & Task Queue ---
+REDIS_URL=redis://redis:6379/0                                             # Redis URL used by Arq task queue
 
-# Telegram MTProto API (from my.telegram.org)
-API_ID=12345678
-API_HASH=abcdef0123456789abcdef0123456789
+# --- Telegram MTProto API (from https://my.telegram.org) ---
+API_ID=12345678                                                            # App API ID (numeric)
+API_HASH=abcdef0123456789abcdef0123456789                                  # App API Hash (string)
+CHANNELS_TO_TRACK=-1001234567890,@channel_username,donor_channel            # Comma-separated donor channel IDs/usernames
 
-# Donor Channels to Monitor (comma-separated IDs or usernames)
-CHANNELS_TO_TRACK=-1001234567890,@channel_username,donor_channel
+# --- Telegram Bot Settings ---
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ                     # Bot token from @BotFather
+TARGET_CHANNEL_ID=-1001234567890                                           # Channel ID where approved posts are published
+MODERATOR_CHAT_ID=-1001987654321                                           # Group ID for moderation cards (or leave empty for admin DM)
+ADMIN_IDS=123456789,987654321                                              # Authorized Telegram User IDs (check via @userinfobot)
 
-# Telegram Bot Settings
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
-TARGET_CHANNEL_ID=-1001234567890
-MODERATOR_CHAT_ID=-1001987654321
-ADMIN_IDS=123456789
+# --- AI / LLM Provider Settings ---
+AI_API_KEY=sk-proj-your-key-here                                           # API key (OpenAI, DeepSeek, OpenRouter, etc.)
+AI_BASE_URL=https://api.openai.com/v1                                      # Base URL for OpenAI-compatible API
+AI_MODEL=gpt-4o-mini                                                       # LLM model name for rewriting and curation
+AD_KEYWORDS=реклама,erid,промокод,подписывайтесь,скидка,розыгрыш,promo     # Comma-separated stop-words for ad filtering
+OPENAI_EXTRA_BODY={"temperature": 0.7}                                     # Extra JSON parameters for AI completions
 
-# AI Provider Settings
-AI_API_KEY=sk-proj-your-key-here
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
-AD_KEYWORDS=реклама,erid,промокод,подписывайтесь,скидка,розыгрыш,promo
-OPENAI_EXTRA_BODY={"temperature": 0.7}
-
-# Default UI Language (ru / en)
-LANGUAGE=en
+# --- Interface Localization ---
+LANGUAGE=en                                                                # Default UI interface language (ru / en)
 ```
 
 > **Note on Telegram IDs:**
