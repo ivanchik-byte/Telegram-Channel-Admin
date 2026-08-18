@@ -848,7 +848,8 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
         response = await client.chat.completions.create(
             model=settings.AI_MODEL,
             messages=messages,
-            extra_body=settings.AI_EXTRA_BODY or {}
+            extra_body=settings.AI_EXTRA_BODY or {},
+            timeout=60.0
         )
         return response.choices[0].message.content.strip()
     except Exception as e:

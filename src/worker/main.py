@@ -20,8 +20,13 @@ async def startup(ctx):
     await bot.get_me()  # Validate token, throws on error
 
     # AI client created once at startup, shared across all tasks via ctx
-    ctx['ai_client'] = AsyncOpenAI(api_key=settings.AI_API_KEY, base_url=settings.AI_BASE_URL)
-    logger.info("AI client initialized.")
+    ctx['ai_client'] = AsyncOpenAI(
+        api_key=settings.AI_API_KEY,
+        base_url=settings.AI_BASE_URL,
+        timeout=60.0,
+        max_retries=2
+    )
+    logger.info(f"AI client initialized with model '{settings.AI_MODEL}' on endpoint '{settings.AI_BASE_URL}'.")
 
 
 async def shutdown(ctx):
