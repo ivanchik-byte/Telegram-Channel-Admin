@@ -124,11 +124,13 @@ async def main():
         logger.error(f"Session file not found at {SESSION_FILE}.session. Please run login.py first.")
         return
 
-    # Check parsed channels
     channels = settings.parsed_channels
     if not channels:
         import sys
         sys.exit("CHANNELS_TO_TRACK is empty")
+
+    from src.database.engine import init_db
+    await init_db()
 
     client = TelegramClient(SESSION_FILE, settings.API_ID, settings.API_HASH)
     

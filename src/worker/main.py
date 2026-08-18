@@ -12,6 +12,9 @@ from openai import AsyncOpenAI
 
 async def startup(ctx):
     logger.info("Arq worker is starting...")
+    from src.database.engine import init_db
+    await init_db()
+
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     ctx['bot'] = bot
     await bot.get_me()  # Validate token, throws on error
