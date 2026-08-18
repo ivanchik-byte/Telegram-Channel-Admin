@@ -20,6 +20,7 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS queue_limit INTEGER DEFAULT 5;"))
                 await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS ui_lang VARCHAR(10) DEFAULT 'ru';"))
                 await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS post_lang VARCHAR(10) DEFAULT 'ru';"))
+                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS custom_prompt TEXT;"))
             except Exception as e:
                 logger.debug(f"init_db columns check: {e}")
     except Exception as e:

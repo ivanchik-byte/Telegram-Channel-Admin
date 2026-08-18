@@ -154,6 +154,10 @@ TRANSLATIONS = {
             '- /clear — полностью очистить очередь публикации и корзину.\n'
             '- /clear_db — полностью очистить базу данных постов.\n'
             '- /queue [лимит] — изменить максимальный размер очереди (по умолчанию 5, например: /queue 20).\n'
+            '- /lang — изменить язык интерфейса или язык постов (ИИ).\n'
+            '- /prompt — управление системным промптом ИИ (просмотр, редактирование, сброс).\n'
+            '- /set_prompt [текст] — установить свой системный промпт для рерайта.\n'
+            '- /reset_prompt — сбросить промпт на стандартный.\n'
         ),
 
         # --- AI custom edit ---
@@ -216,6 +220,21 @@ TRANSLATIONS = {
         'btn_change_post_lang': '✍️ Изменить язык постов (ИИ)',
         'status_ui_lang': '• <b>Язык интерфейса:</b> <code>{ui_lang}</code>',
         'status_post_lang': '• <b>Язык постов (ИИ):</b> <code>{post_lang}</code>',
+
+        # --- Prompt Management ---
+        'prompt_status_custom': '✏️ <b>Пользовательский</b> ({length} симв.)',
+        'prompt_status_default': '⚙️ <b>Стандартный ({lang})</b>',
+        'prompt_menu_title': '⚙️ <b>Управление системным промптом ИИ:</b>\n\n• <b>Статус:</b> {status}\n\n{preview}\n\nВы можете изменить системный промпт для рерайта постов прямо сейчас или сбросить его на стандартный.',
+        'prompt_preview_label': '<b>Текущий текст промпта:</b>\n<blockquote>{text}</blockquote>',
+        'btn_set_prompt': '✏️ Изменить промпт',
+        'btn_reset_prompt': '🔄 Сбросить на стандартный',
+        'btn_show_prompt': '👁 Показать весь промпт',
+        'ib_prompt': '📝 Промпт ИИ',
+        'prompt_send_new': '📝 <b>Отправьте новый системный промпт для рерайта постов следующим сообщением.</b>\n\nДля отмены отправьте /cancel.',
+        'prompt_updated': '✅ <b>Системный промпт успешно обновлен!</b>\nНовый размер: {length} символов.',
+        'prompt_reset_done': '✅ Системный промпт сброшен на стандартный ({lang})!',
+        'prompt_canceled': 'Изменение промпта отменено.',
+        'prompt_full_title': '📋 <b>Полный системный промпт ({type}):</b>\n\n',
 
         # --- Time units ---
         'time_days': 'д.',
@@ -374,6 +393,10 @@ TRANSLATIONS = {
             '- /clear — completely clear publish queue and basket.\n'
             '- /clear_db — completely clear the post database.\n'
             '- /queue [limit] — change max queue size (default 5, e.g. /queue 20).\n'
+            '- /lang — change interface or AI post generation language.\n'
+            '- /prompt — manage AI system prompt (view, edit, reset).\n'
+            '- /set_prompt [text] — set custom system prompt for AI rewriting.\n'
+            '- /reset_prompt — revert system prompt to default.\n'
         ),
 
         # --- AI custom edit ---
@@ -436,6 +459,21 @@ TRANSLATIONS = {
         'btn_change_post_lang': '✍️ Change posts language (AI)',
         'status_ui_lang': '• <b>UI Language:</b> <code>{ui_lang}</code>',
         'status_post_lang': '• <b>Posts Language (AI):</b> <code>{post_lang}</code>',
+
+        # --- Prompt Management ---
+        'prompt_status_custom': '✏️ <b>Custom</b> ({length} chars)',
+        'prompt_status_default': '⚙️ <b>Default ({lang})</b>',
+        'prompt_menu_title': '⚙️ <b>AI System Prompt Management:</b>\n\n• <b>Status:</b> {status}\n\n{preview}\n\nChange the AI post rewrite prompt on the fly or revert back to default.',
+        'prompt_preview_label': '<b>Current Prompt Text:</b>\n<blockquote>{text}</blockquote>',
+        'btn_set_prompt': '✏️ Change Prompt',
+        'btn_reset_prompt': '🔄 Revert to Default',
+        'btn_show_prompt': '👁 View Full Prompt',
+        'ib_prompt': '📝 AI Prompt',
+        'prompt_send_new': '📝 <b>Send your new AI system prompt in the next message.</b>\n\nSend /cancel to abort.',
+        'prompt_updated': '✅ <b>AI system prompt successfully updated!</b>\nLength: {length} characters.',
+        'prompt_reset_done': '✅ AI system prompt reverted to default ({lang})!',
+        'prompt_canceled': 'Prompt update cancelled.',
+        'prompt_full_title': '📋 <b>Full System Prompt ({type}):</b>\n\n',
 
         # --- Time units ---
         'time_days': 'd',
