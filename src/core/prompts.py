@@ -86,7 +86,9 @@ Rules:
 13. Restrained emoji. Insert 1-3 emoji per paragraph to set accents without distracting the reader from the substance.
 """
 
-def get_system_prompt(post_lang: str = 'ru') -> str:
+def get_system_prompt(post_lang: str = 'ru', custom_prompt: str | None = None) -> str:
+    if custom_prompt and custom_prompt.strip():
+        return custom_prompt.strip()
     return SYSTEM_PROMPT_REWRITE_EN if post_lang == 'en' else SYSTEM_PROMPT_REWRITE_RU
 
 # Default fallback prompt based on env setting

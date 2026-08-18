@@ -13,6 +13,9 @@ class TextReplacement(StatesGroup):
 class AIEditState(StatesGroup):
     waiting_for_instruction = State()
 
+class PromptState(StatesGroup):
+    waiting_for_prompt = State()
+
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import Command, BaseFilter, CommandObject
 from src.core.logger import logger
@@ -95,7 +98,8 @@ def get_main_inline_keyboard():
             InlineKeyboardButton(text=i18n.get('ib_clear_db'), callback_data="menu_clear_db")
         ],
         [
-            InlineKeyboardButton(text=i18n.get('ib_languages'), callback_data="menu_languages")
+            InlineKeyboardButton(text=i18n.get('ib_languages'), callback_data="menu_languages"),
+            InlineKeyboardButton(text=i18n.get('ib_prompt'), callback_data="menu_prompt")
         ]
     ])
 
@@ -354,7 +358,9 @@ async def reply_moderation(message: Message, bot: Bot):
                     
                     ai_client = AsyncOpenAI(api_key=settings.AI_API_KEY, base_url=settings.AI_BASE_URL)
                     bot_settings = await SettingsRepository.get_settings(session)
-                    sys_prompt = get_system_prompt(getattr(bot_settings, 'post_lang', 'ru'))
+                    post_lang = getattr(bot_settings, 'post_lang', 'ru')
+                    custom_prompt = getattr(bot_settings, 'custom_prompt', None)
+                    sys_prompt = get_system_prompt(post_lang, custom_prompt)
                     
                     # Release session lock during network call
                     await session.commit()
@@ -576,6 +582,132 @@ async def cb_change_post_lang(callback: CallbackQuery):
         parse_mode="HTML"
     )
 
+
+# --- AI System Prompt Management ---
+
+@router.message(Command("prompt"), IsModeratorFilter())
+@router.message(Command("prompts"), IsModeratorFilter())
+@router.callback_query(F.data == "menu_prompt", IsModeratorFilter())
+async def cmd_prompt_menu(event: Message | CallbackQuery):
+    async with async_session_maker() as session:
+        bot_settings = await SettingsRepository.get_settings(session)
+
+    custom_prompt = getattr(bot_settings, 'custom_prompt', None)
+    post_lang = getattr(bot_settings, 'post_lang', 'ru')
+
+    if custom_prompt and custom_prompt.strip():
+        status = i18n.get('prompt_status_custom', length=len(custom_prompt.strip()))
+        preview_text = custom_prompt.strip()[:250] + ("..." if len(custom_prompt.strip()) > 250 else "")
+        preview = i18n.get('prompt_preview_label', text=escape(preview_text))
+    else:
+        status = i18n.get('prompt_status_default', lang=post_lang.upper())
+        preview = ""
+
+    text = i18n.get('prompt_menu_title', status=status, preview=preview)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=i18n.get('btn_set_prompt'), callback_data="prompt_set"),
+            InlineKeyboardButton(text=i18n.get('btn_reset_prompt'), callback_data="prompt_reset")
+        ],
+        [
+            InlineKeyboardButton(text=i18n.get('btn_show_prompt'), callback_data="prompt_show")
+        ]
+    ])
+
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+        await event.message.answer(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await event.reply(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(Command("set_prompt"), IsModeratorFilter())
+@router.message(Command("setprompt"), IsModeratorFilter())
+async def cmd_set_prompt(message: Message, command: CommandObject, state: FSMContext):
+    if command and command.args and command.args.strip():
+        new_prompt = command.args.strip()
+        async with async_session_maker() as session:
+            await SettingsRepository.update_settings(session, custom_prompt=new_prompt)
+        await message.reply(
+            i18n.get('prompt_updated', length=len(new_prompt)),
+            parse_mode="HTML"
+        )
+    else:
+        await state.set_state(PromptState.waiting_for_prompt)
+        await message.reply(i18n.get('prompt_send_new'), parse_mode="HTML")
+
+
+@router.message(Command("reset_prompt"), IsModeratorFilter())
+@router.message(Command("resetprompt"), IsModeratorFilter())
+async def cmd_reset_prompt(message: Message):
+    async with async_session_maker() as session:
+        bot_settings = await SettingsRepository.get_settings(session)
+        await SettingsRepository.update_settings(session, custom_prompt=None)
+        post_lang = getattr(bot_settings, 'post_lang', 'ru')
+    await message.reply(i18n.get('prompt_reset_done', lang=post_lang.upper()), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "prompt_set", IsModeratorFilter())
+async def cb_prompt_set(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(PromptState.waiting_for_prompt)
+    await callback.answer()
+    await callback.message.answer(i18n.get('prompt_send_new'), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "prompt_reset", IsModeratorFilter())
+async def cb_prompt_reset(callback: CallbackQuery):
+    async with async_session_maker() as session:
+        bot_settings = await SettingsRepository.get_settings(session)
+        await SettingsRepository.update_settings(session, custom_prompt=None)
+        post_lang = getattr(bot_settings, 'post_lang', 'ru')
+    await callback.answer(i18n.get('prompt_reset_done', lang=post_lang.upper()), show_alert=True)
+    await cmd_prompt_menu(callback)
+
+
+@router.callback_query(F.data == "prompt_show", IsModeratorFilter())
+async def cb_prompt_show(callback: CallbackQuery):
+    from src.core.prompts import get_system_prompt
+    async with async_session_maker() as session:
+        bot_settings = await SettingsRepository.get_settings(session)
+    post_lang = getattr(bot_settings, 'post_lang', 'ru')
+    custom_prompt = getattr(bot_settings, 'custom_prompt', None)
+
+    prompt_text = get_system_prompt(post_lang, custom_prompt)
+    prompt_type = "Custom" if (custom_prompt and custom_prompt.strip()) else f"Default ({post_lang.upper()})"
+
+    header = i18n.get('prompt_full_title', type=prompt_type)
+    full_message = f"{header}<code>{escape(prompt_text)}</code>"
+
+    await callback.answer()
+    if len(full_message) <= 4000:
+        await callback.message.answer(full_message, parse_mode="HTML")
+    else:
+        for i in range(0, len(prompt_text), 3500):
+            chunk = prompt_text[i:i+3500]
+            await callback.message.answer(f"<code>{escape(chunk)}</code>", parse_mode="HTML")
+
+
+@router.message(PromptState.waiting_for_prompt, IsModeratorFilter())
+async def process_new_prompt_message(message: Message, state: FSMContext):
+    if message.text and message.text.strip() == "/cancel":
+        await state.clear()
+        await message.reply(i18n.get('prompt_canceled'))
+        return
+
+    if not message.text or not message.text.strip():
+        await message.reply(i18n.get('prompt_send_new'), parse_mode="HTML")
+        return
+
+    new_prompt = message.text.strip()
+    async with async_session_maker() as session:
+        await SettingsRepository.update_settings(session, custom_prompt=new_prompt)
+
+    await state.clear()
+    await message.reply(
+        i18n.get('prompt_updated', length=len(new_prompt)),
+        parse_mode="HTML"
+    )
 
 
 @router.message(Command("edit"), IsModeratorFilter())
@@ -834,8 +966,9 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
     async with async_session_maker() as session:
         bot_settings = await SettingsRepository.get_settings(session)
         post_lang = getattr(bot_settings, 'post_lang', 'ru')
+        custom_prompt = getattr(bot_settings, 'custom_prompt', None)
         
-    sys_prompt = get_system_prompt(post_lang)
+    sys_prompt = get_system_prompt(post_lang, custom_prompt)
     
     messages = [
         {"role": "system", "content": sys_prompt},

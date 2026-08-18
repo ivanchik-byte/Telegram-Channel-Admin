@@ -44,4 +44,5 @@ class BotSettings(Base):
     queue_limit: Mapped[int] = mapped_column(Integer, default=5)
     ui_lang: Mapped[str] = mapped_column(String(10), default='ru')
     post_lang: Mapped[str] = mapped_column(String(10), default='ru')
+    custom_prompt: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 

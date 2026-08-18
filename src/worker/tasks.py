@@ -230,6 +230,7 @@ async def process_post_task(ctx, post_id: int):
             logger.info(f"[Worker] Пост {post_id} отправлен на AI-рерайт.")
 
         post_lang = getattr(settings_obj, 'post_lang', 'ru')
+        custom_prompt = getattr(settings_obj, 'custom_prompt', None)
 
     # Session closed - now safe to make long network calls
 
@@ -240,7 +241,7 @@ async def process_post_task(ctx, post_id: int):
     # --- Step 2: AI-rewrite — DB session closed ---
     from src.core.prompts import get_system_prompt
     client: AsyncOpenAI = ctx['ai_client']
-    sys_prompt = get_system_prompt(post_lang)
+    sys_prompt = get_system_prompt(post_lang, custom_prompt)
     rewritten_text = await _call_ai_with_retry(client, post_text, post_id, system_prompt=sys_prompt)
 
 
@@ -331,7 +332,8 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         async with async_session_maker() as session:
             best_settings = await SettingsRepository.get_settings(session)
             best_post_lang = getattr(best_settings, 'post_lang', 'ru')
-        best_sys_prompt = get_system_prompt(best_post_lang)
+            best_custom_prompt = getattr(best_settings, 'custom_prompt', None)
+        best_sys_prompt = get_system_prompt(best_post_lang, best_custom_prompt)
         rewritten = await _call_ai_with_retry(client, best_post.text, best_post.id, system_prompt=best_sys_prompt)
 
         if rewritten:

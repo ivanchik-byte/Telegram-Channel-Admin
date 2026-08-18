@@ -183,6 +183,9 @@ LANGUAGE=en                                                                # Def
 | `/mod` | None | Any | Request the oldest queued post for immediate review | `/mod` |
 | `/edit` | `<id> <text>` | Any | Edit rewritten text of a pending post by ID | `/edit 15 New post text` |
 | `/lang` | None | Any | Change interface language or AI generation language | `/lang` |
+| `/prompt` | None | Any | Manage AI system prompt (view, interactive edit, reset) | `/prompt` |
+| `/set_prompt` | `[text]` | Any | Set custom AI system rewrite prompt | `/set_prompt Write like a tech journalist` |
+| `/reset_prompt` | None | Any | Revert AI system prompt to default | `/reset_prompt` |
 | `/clear` | None | Any | Cancel all currently queued and moderating posts | `/clear` |
 | `/clear_db` | None | Any | Delete all processed posts from database | `/clear_db` |
 | `/help` | None | Any | Show commands cheat sheet | `/help` |
