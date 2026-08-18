@@ -3,6 +3,7 @@ from aiogram import Bot, Dispatcher
 from src.core.config import settings
 from src.core.logger import logger
 from src.bot.handlers import router
+from src.database.engine import init_db
 
 
 async def main():
@@ -11,6 +12,9 @@ async def main():
     if not settings.ADMIN_IDS:
         logger.error("ADMIN_IDS is empty. Refusing to start.")
         return
+
+    # Ensure database tables and columns are created
+    await init_db()
 
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()

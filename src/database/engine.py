@@ -12,12 +12,16 @@ async_session_maker = async_sessionmaker(
 async def init_db():
     from src.database.models import Base
     from sqlalchemy import text
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        try:
-            await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS queue_limit INTEGER DEFAULT 5;"))
-            await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS ui_lang VARCHAR(10) DEFAULT 'ru';"))
-            await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS post_lang VARCHAR(10) DEFAULT 'ru';"))
-        except Exception:
-            pass
+    from src.core.logger import logger
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            try:
+                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS queue_limit INTEGER DEFAULT 5;"))
+                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS ui_lang VARCHAR(10) DEFAULT 'ru';"))
+                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS post_lang VARCHAR(10) DEFAULT 'ru';"))
+            except Exception as e:
+                logger.debug(f"init_db columns check: {e}")
+    except Exception as e:
+        logger.warning(f"init_db execution warning: {e}")
 
