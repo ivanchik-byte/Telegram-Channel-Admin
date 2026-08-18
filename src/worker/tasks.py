@@ -3,7 +3,7 @@ import re
 import hashlib
 from datetime import timedelta
 
-from openai import AsyncOpenAI, APIStatusError, APIConnectionError
+from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.enums import ParseMode
 from html import escape
@@ -63,7 +63,7 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
         from src.core.prompts import SYSTEM_PROMPT_REWRITE
         system_prompt = SYSTEM_PROMPT_REWRITE
 
-    backoff_delays = [2, 4, 8, 16, 32]
+    backoff_delays = [2, 4, 8]
 
     for attempt, delay in enumerate(backoff_delays):
         try:
@@ -73,32 +73,37 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text}
                 ],
-                extra_body=settings.AI_EXTRA_BODY or {}
+                extra_body=settings.AI_EXTRA_BODY or {},
+                timeout=60.0
             )
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            return content.strip() if content else None
 
-
-        except APIStatusError as e:
-            if e.status_code == 429 or (500 <= e.status_code < 600):
-                if attempt < len(backoff_delays) - 1:
-                    logger.warning(f"[Worker] Пост {post_id}: Ошибка {e.status_code}. Повтор через {delay} сек...")
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (RateLimit/Server Error).")
-            else:
-                logger.error(f"[Worker] Пост {post_id}: Критическая ошибка API: {e.status_code} - {e.message}")
-            break
-        except APIConnectionError:
+        except (APITimeoutError, asyncio.TimeoutError) as e:
+            logger.error(f"[Worker] Пост {post_id}: Таймаут ожидания ответа ИИ ({settings.AI_MODEL} на {settings.AI_BASE_URL}): {e}")
             if attempt < len(backoff_delays) - 1:
-                logger.warning(f"[Worker] Пост {post_id}: Ошибка соединения. Повтор через {delay} сек...")
+                logger.warning(f"[Worker] Пост {post_id}: Повторная попытка через {delay} сек...")
                 await asyncio.sleep(delay)
             else:
-                logger.error(f"[Worker] Пост {post_id}: Исчерпаны лимиты ожидания (Connection).")
+                break
+        except APIStatusError as e:
+            logger.error(f"[Worker] Пост {post_id}: Ошибка API ИИ ({e.status_code}): {e.message}")
+            if e.status_code == 429 or (500 <= e.status_code < 600):
+                if attempt < len(backoff_delays) - 1:
+                    logger.warning(f"[Worker] Пост {post_id}: Повтор через {delay} сек...")
+                    await asyncio.sleep(delay)
+                    continue
+            break
+        except APIConnectionError as e:
+            logger.error(f"[Worker] Пост {post_id}: Ошибка соединения с ИИ API ({settings.AI_BASE_URL}): {e}")
+            if attempt < len(backoff_delays) - 1:
+                logger.warning(f"[Worker] Пост {post_id}: Повтор через {delay} сек...")
+                await asyncio.sleep(delay)
+                continue
             break
         except Exception as e:
-            logger.error(f"[Worker] Пост {post_id}: Неизвестная ошибка: {e}")
+            logger.error(f"[Worker] Пост {post_id}: Ошибка при запросе к ИИ: {e}")
             break
-
     return None
 
 
@@ -294,7 +299,8 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         response = await client.chat.completions.create(
             model=settings.AI_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            extra_body=settings.AI_EXTRA_BODY or {}
+            extra_body=settings.AI_EXTRA_BODY or {},
+            timeout=60.0
         )
         best_ids_str = response.choices[0].message.content.strip()
         import re
