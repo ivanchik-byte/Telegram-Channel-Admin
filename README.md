@@ -1,4 +1,4 @@
-*Russian version available in [README_ru.md](README_ru.md) | Author's Channel: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)*
+РУССКАЯ ВЕРСИЯ ДОСТУПНА ТУТ: [README_ru.md](README_ru.md) | Author's Channel: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)
 
 # Telegram Channel Admin (AI Moderator & Content Curator)
 
@@ -51,7 +51,7 @@ flowchart TD
 
 ### Prerequisites
 
-- **Docker** and **Docker Compose v2**
+- **Docker** and **Docker Compose v2** (Docker Desktop on Windows/macOS, or Docker Engine on Linux)
 - **Telegram Account** phone number (for Telethon Userbot)
 - **Telegram Bot Token** from [@BotFather](https://t.me/BotFather)
 - **Telegram API ID & API Hash** from [my.telegram.org](https://my.telegram.org)
@@ -59,24 +59,66 @@ flowchart TD
 
 ---
 
-### Step 1: Clone the Repository
+### Linux / macOS Installation
+
+#### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/ivanchik-byte/Telegram-Channel-Admin.git
 cd Telegram-Channel-Admin
 ```
 
----
-
-### Step 2: Configure Environment Variables
-
-Create your `.env` configuration file:
+#### 2. Configure Environment Variables
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and fill in your credentials:
+Fill in `.env` (see table below).
+
+#### 3. Authorize the Parser (One-Time Login)
+
+```bash
+docker compose up -d db redis
+docker compose run --rm parser python src/login.py
+```
+
+Enter your phone number, Telegram confirmation code, and 2FA password (if enabled).
+
+#### 4. Build and Start All Services
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+---
+
+### Windows Installation (Docker Desktop)
+
+1. Install and start [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/) (ensure the **WSL 2 backend** is enabled in settings).
+2. Open **PowerShell** or **CMD** and clone the repository:
+   ```powershell
+   git clone https://github.com/ivanchik-byte/Telegram-Channel-Admin.git
+   cd Telegram-Channel-Admin
+   copy .env.example .env
+   ```
+3. Open `.env` in Notepad or VS Code and fill in your API credentials.
+4. Run the one-time Telegram authorization:
+   ```powershell
+   docker compose up -d db redis
+   docker compose run --rm parser python src/login.py
+   ```
+   Enter your phone number, confirmation code, and 2FA password.
+5. Build and launch all services:
+   ```powershell
+   docker compose up -d --build
+   docker compose logs -f
+   ```
+
+---
+
+### Environment Variables Configuration (`.env`)
 
 ```ini
 # --- PostgreSQL Database ---
@@ -117,41 +159,7 @@ LANGUAGE=en                                                                # Def
 
 ---
 
-### Step 3: Authorize the Parser (One-Time Login)
-
-Telethon needs a valid user session file (`data/anon.session`) to read donor channels:
-
-1. Start the database and Redis services:
-   ```bash
-   docker compose up -d db redis
-   ```
-
-2. Run the authorization script inside a temporary container:
-   ```bash
-   docker compose run --rm parser python src/login.py
-   ```
-
-3. Enter your phone number, the verification code from Telegram, and your 2FA password (if enabled).
-
----
-
-### Step 4: Build and Start All Services
-
-Launch the full stack in the background:
-
-```bash
-docker compose up -d --build
-```
-
-Check that all containers are running:
-
-```bash
-docker compose ps
-```
-
----
-
-### Step 5: Initial Bot Setup
+### Initial Bot Setup
 
 1. Open Telegram and send `/start` to your bot.
 2. Select your preferred **UI Language** and **AI Post Generation Language** from the interactive buttons.
