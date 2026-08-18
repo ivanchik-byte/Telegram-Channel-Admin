@@ -8,9 +8,7 @@ __pycache__/
 env/
 venv/
 .venv/
-data/*
-!data/.gitkeep
-!data/media/.gitkeep
+data/
 *.session
 *.session-journal
 *.md
