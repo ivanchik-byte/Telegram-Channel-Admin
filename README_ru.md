@@ -79,37 +79,35 @@ cp .env.example .env
 Откройте `.env` и укажите ваши данные:
 
 ```ini
-# База данных PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=your_secure_password
-POSTGRES_DB=tg_admin
-DATABASE_URL=postgresql+asyncpg://postgres:your_secure_password@db:5432/tg_admin
+# --- База данных PostgreSQL ---
+POSTGRES_USER=postgres                                                     # Пользователь БД для контейнера PostgreSQL
+POSTGRES_PASSWORD=your_secure_password                                     # Пароль для базы данных
+POSTGRES_DB=tg_admin                                                       # Имя базы данных для хранения постов и настроек
+DATABASE_URL=postgresql+asyncpg://postgres:your_secure_password@db:5432/tg_admin # Асинхронная строка подключения (asyncpg)
 
-# Redis
-REDIS_URL=redis://redis:6379/0
+# --- Кэш и очередь задач Redis ---
+REDIS_URL=redis://redis:6379/0                                             # Ссылка на Redis для очереди задач Arq
 
-# Telegram MTProto API (с my.telegram.org)
-API_ID=12345678
-API_HASH=abcdef0123456789abcdef0123456789
+# --- Telegram MTProto API (с сайта https://my.telegram.org) ---
+API_ID=12345678                                                            # Числовой App API ID
+API_HASH=abcdef0123456789abcdef0123456789                                  # Строковый App API Hash
+CHANNELS_TO_TRACK=-1001234567890,@channel_username,donor_channel            # Каналы-доноры через запятую (ID или юзернеймы)
 
-# Каналы-доноры (ID или юзернеймы через запятую)
-CHANNELS_TO_TRACK=-1001234567890,@channel_username,donor_channel
+# --- Настройки бота Telegram ---
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ                     # Токен бота от @BotFather
+TARGET_CHANNEL_ID=-1001234567890                                           # ID целевого канала для публикации постов
+MODERATOR_CHAT_ID=-1001987654321                                           # ID группы модераторов (или пусто для отправки в ЛС)
+ADMIN_IDS=123456789,987654321                                              # Telegram ID администраторов с доступом (узнать в @userinfobot)
 
-# Настройки бота Telegram
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
-TARGET_CHANNEL_ID=-1001234567890
-MODERATOR_CHAT_ID=-1001987654321
-ADMIN_IDS=123456789
+# --- Настройки провайдера нейросети (ИИ) ---
+AI_API_KEY=sk-proj-your-key-here                                           # API-ключ (OpenAI, DeepSeek, OpenRouter и др.)
+AI_BASE_URL=https://api.openai.com/v1                                      # Базовый URL API провайдера
+AI_MODEL=gpt-4o-mini                                                       # Модель нейросети для рерайта и отбора
+AD_KEYWORDS=реклама,erid,промокод,подписывайтесь,скидка,розыгрыш,promo     # Стоп-слова для фильтрации рекламы через запятую
+OPENAI_EXTRA_BODY={"temperature": 0.7}                                     # Дополнительные параметры в формате JSON
 
-# Настройки нейросети
-AI_API_KEY=sk-proj-your-key-here
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
-AD_KEYWORDS=реклама,erid,промокод,подписывайтесь,скидка,розыгрыш,promo
-OPENAI_EXTRA_BODY={"temperature": 0.7}
-
-# Язык интерфейса по умолчанию (ru / en)
-LANGUAGE=ru
+# --- Язык интерфейса по умолчанию ---
+LANGUAGE=ru                                                                # Язык интерфейса бота (ru / en)
 ```
 
 > **Где взять Telegram ID:**
