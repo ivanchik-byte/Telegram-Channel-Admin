@@ -56,35 +56,79 @@ def format_seconds_readable(seconds: int) -> str:
 def format_telegram_html(text: str) -> str:
     """
     Safely formats text for Telegram's HTML parse mode.
-    Preserves valid Telegram HTML tags, and converts Markdown bold/spoilers.
+    Converts Markdown bold/code/spoilers and balances/sanitizes HTML tags.
     """
     if not text:
         return ""
     from html import escape
     import re
 
-    escaped = escape(text)
-    # Convert **bold** to <b>bold</b>
-    bold_converted = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', escaped)
-    # Convert `code` to <code>code</code>
-    code_converted = re.sub(r'`(.*?)`', r'<code>\1</code>', bold_converted)
-    # Convert ||spoiler|| to <tg-spoiler>spoiler</tg-spoiler>
-    spoiler_converted = re.sub(r'\|\|(.*?)\|\|', r'<tg-spoiler>\1</tg-spoiler>', code_converted)
+    # Fix headline if it has a dangling </b> without opening <b>
+    lines = text.split('\n')
+    if lines and '</b>' in lines[0] and '<b' not in lines[0]:
+        lines[0] = '<b>' + lines[0]
+        text = '\n'.join(lines)
 
-    # Restore allowed tags
-    restored = spoiler_converted.replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>")
-    restored = restored.replace("&lt;i&gt;", "<i>").replace("&lt;/i&gt;", "</i>")
-    restored = restored.replace("&lt;u&gt;", "<u>").replace("&lt;/u&gt;", "</u>")
-    restored = restored.replace("&lt;s&gt;", "<s>").replace("&lt;/s&gt;", "</s>")
-    restored = restored.replace("&lt;code&gt;", "<code>").replace("&lt;/code&gt;", "</code>")
-    restored = restored.replace("&lt;pre&gt;", "<pre>").replace("&lt;/pre&gt;", "</pre>")
-    restored = restored.replace("&lt;blockquote&gt;", "<blockquote>").replace("&lt;/blockquote&gt;", "</blockquote>")
-    restored = restored.replace("&lt;tg-spoiler&gt;", "<tg-spoiler>").replace("&lt;/tg-spoiler&gt;", "</tg-spoiler>")
-    # Restore <a href="...">
-    restored = re.sub(r'&lt;a href=&quot;(.*?)&quot;&gt;', r'<a href="\1">', restored)
-    restored = re.sub(r'&lt;a href=&#x27;(.*?)&#x27;&gt;', r'<a href="\1">', restored)
-    restored = restored.replace("&lt;/a&gt;", "</a>")
-    return restored
+    # Standardize Markdown tags before escaping
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'`(.*?)`', r'<code>\1</code>', text)
+    text = re.sub(r'\|\|(.*?)\|\|', r'<tg-spoiler>\1</tg-spoiler>', text)
+
+    allowed_tags = {'b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'blockquote', 'tg-spoiler', 'a'}
+    tag_regex = re.compile(r'(</?([a-zA-Z0-9_-]+)(?:\s+[^>]*)?>)')
+
+    parts = []
+    stack = []
+    last_idx = 0
+
+    for match in tag_regex.finditer(text):
+        start, end = match.span()
+        plain_part = text[last_idx:start]
+        parts.append(escape(plain_part))
+
+        full_tag = match.group(1)
+        tag_name = match.group(2).lower()
+        is_closing = full_tag.startswith('</')
+
+        if tag_name not in allowed_tags:
+            parts.append(escape(full_tag))
+        else:
+            if is_closing:
+                if stack and stack[-1] == tag_name:
+                    stack.pop()
+                    parts.append(f"</{tag_name}>")
+                elif tag_name in stack:
+                    while stack and stack[-1] != tag_name:
+                        unclosed = stack.pop()
+                        parts.append(f"</{unclosed}>")
+                    if stack and stack[-1] == tag_name:
+                        stack.pop()
+                        parts.append(f"</{tag_name}>")
+                else:
+                    # Dangling closing tag with no matching opening tag: discard
+                    pass
+            else:
+                if tag_name == 'a':
+                    href_match = re.search(r'href=[\'"]([^\'"]+)[\'"]', full_tag)
+                    if href_match:
+                        clean_href = escape(href_match.group(1), quote=True)
+                        parts.append(f'<a href="{clean_href}">')
+                        stack.append('a')
+                    else:
+                        parts.append(escape(full_tag))
+                else:
+                    parts.append(f"<{tag_name}>")
+                    stack.append(tag_name)
+
+        last_idx = end
+
+    parts.append(escape(text[last_idx:]))
+
+    while stack:
+        unclosed = stack.pop()
+        parts.append(f"</{unclosed}>")
+
+    return "".join(parts)
 
 
 def clean_post_output(text: str) -> str:
