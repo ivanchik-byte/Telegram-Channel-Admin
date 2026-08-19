@@ -1,4 +1,6 @@
-ENGLISH VERSION IS AVAILABLE HERE: [README.md](README.md) | Канал автора: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)
+🇬🇧 🇺🇸 ENGLISH VERSION IS AVAILABLE HERE: [README_en.md](README_en.md) | Канал автора: [t.me/ivanchik_byte](https://t.me/ivanchik_byte)
+
+> 🤖 **Инструкция для ИИ-агентов / Быстрый старт**: Если вы используете ИИ-агента (Claude Code, Cursor, Windsurf, Antigravity и др.) для скачивания и запуска проекта, передайте ему документ **[INSTALL.md](INSTALL.md)**.
 
 # Telegram Channel Admin (ИИ-Модератор и Куратор Контента)
 
@@ -48,6 +50,8 @@ flowchart TD
 ---
 
 ## Установка и запуск
+
+> 🤖 **Инструкция для ИИ-агентов**: Для автоматического развертывания проекта с помощью ИИ-агента используйте специализированный файл **[INSTALL.md](INSTALL.md)**.
 
 ### Предварительные требования
 
