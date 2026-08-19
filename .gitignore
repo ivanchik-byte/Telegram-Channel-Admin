@@ -13,7 +13,9 @@ data/
 *.session-journal
 *.md
 !README.md
+!README_en.md
 !README_ru.md
+!INSTALL.md
 !COMMANDS.md
 !COMMANDS_ru.md
 .idea/
