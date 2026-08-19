@@ -67,17 +67,20 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
 
     for attempt, delay in enumerate(backoff_delays):
         try:
+            full_user_content = f"{system_prompt}\n\n<source_draft>\n{text}\n</source_draft>"
             response = await client.chat.completions.create(
                 model=settings.AI_MODEL,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text}
+                    {"role": "user", "content": full_user_content}
                 ],
                 extra_body=settings.AI_EXTRA_BODY or {},
                 timeout=60.0
             )
             content = response.choices[0].message.content
-            return content.strip() if content else None
+            if content:
+                from src.core.utils import clean_post_output
+                content = clean_post_output(content)
+            return content if content else None
 
         except (APITimeoutError, asyncio.TimeoutError) as e:
             logger.error(f"[Worker] Пост {post_id}: Таймаут ожидания ответа ИИ ({settings.AI_MODEL} на {settings.AI_BASE_URL}): {e}")
@@ -133,8 +136,8 @@ async def process_post_task(ctx, post_id: int):
 
         # Check global pause
         if settings_obj.pause_until and settings_obj.pause_until > now:
-            logger.debug(f"[Worker] Бот на паузе до {settings_obj.pause_until}. Откладываем пост {post_id} на 60 сек.")
-            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
+            logger.debug(f"[Worker] Бот на паузе до {settings_obj.pause_until}. Откладываем пост {post_id} на 15 сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=15))
             return
 
         if settings_obj.next_post_time and settings_obj.next_post_time > now:
@@ -148,8 +151,8 @@ async def process_post_task(ctx, post_id: int):
         # Check moderation limits
         mod_count, queued_count = await PostRepository.get_queue_counts(session)
         if settings_obj.mode == 'auto' and mod_count >= 1:
-            logger.info(f"[Worker] В авторежиме уже есть пост на модерации. Откладываем пост {post_id} на 60 сек.")
-            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=60))
+            logger.info(f"[Worker] В авторежиме уже есть пост на модерации. Откладываем пост {post_id} на 15 сек.")
+            await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=15))
             return
 
         # Reserve post atomically
