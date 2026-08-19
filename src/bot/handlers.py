@@ -186,10 +186,19 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
             display_text = format_telegram_html(text_to_publish[:TG_SAFE_MESSAGE_LIMIT])
             new_text = f"{i18n.get('msg_published')}\n{i18n.get('action_by', username=action_by)}\n\n{display_text}"
             
-            if callback.message.photo or callback.message.video or callback.message.document:
-                await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
-            else:
-                await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
+            try:
+                if callback.message.photo or callback.message.video or callback.message.document:
+                    await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
+                else:
+                    await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
+            except Exception as edit_err:
+                logger.warning(f"[Bot] Edit message failed with HTML, falling back to plain text: {edit_err}")
+                import re
+                plain_new_text = re.sub(r'<[^>]+>', '', new_text)
+                if callback.message.photo or callback.message.video or callback.message.document:
+                    await callback.message.edit_caption(caption=plain_new_text, reply_markup=None)
+                else:
+                    await callback.message.edit_text(text=plain_new_text, reply_markup=None)
 
             _cleanup_media(post.media_path, "публикации")
 
@@ -236,10 +245,19 @@ async def process_reject(callback: CallbackQuery):
         display_text = format_telegram_html((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
         new_text = f"{i18n.get('msg_rejected')}\n{i18n.get('action_by', username=action_by)}\n\n{display_text}"
         
-        if callback.message.photo or callback.message.video or callback.message.document:
-            await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
-        else:
-            await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
+        try:
+            if callback.message.photo or callback.message.video or callback.message.document:
+                await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
+            else:
+                await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
+        except Exception as edit_err:
+            logger.warning(f"[Bot] Edit message failed with HTML, falling back to plain text: {edit_err}")
+            import re
+            plain_new_text = re.sub(r'<[^>]+>', '', new_text)
+            if callback.message.photo or callback.message.video or callback.message.document:
+                await callback.message.edit_caption(caption=plain_new_text, reply_markup=None)
+            else:
+                await callback.message.edit_text(text=plain_new_text, reply_markup=None)
             
         _cleanup_media(post.media_path, "отклонения")
 
@@ -283,13 +301,27 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
             if os.path.exists(abs_media_path):
                 try:
                     media_file = FSInputFile(abs_media_path)
-                    if post.media_type == 'photo':
-                        await bot.send_photo(chat_id=target_chat_id, photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                    elif post.media_type == 'video':
-                        await bot.send_video(chat_id=target_chat_id, video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                    else:
-                        await bot.send_document(chat_id=target_chat_id, document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
-                    sent = True
+                    try:
+                        if post.media_type == 'photo':
+                            await bot.send_photo(chat_id=target_chat_id, photo=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                        elif post.media_type == 'video':
+                            await bot.send_video(chat_id=target_chat_id, video=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                        else:
+                            await bot.send_document(chat_id=target_chat_id, document=media_file, caption=text_to_send, reply_markup=keyboard, parse_mode="HTML")
+                        sent = True
+                    except Exception as html_err:
+                        if "can't parse entities" in str(html_err).lower() or "bad request" in str(html_err).lower():
+                            import re
+                            plain_caption = re.sub(r'<[^>]+>', '', text_to_send)
+                            if post.media_type == 'photo':
+                                await bot.send_photo(chat_id=target_chat_id, photo=media_file, caption=plain_caption, reply_markup=keyboard)
+                            elif post.media_type == 'video':
+                                await bot.send_video(chat_id=target_chat_id, video=media_file, caption=plain_caption, reply_markup=keyboard)
+                            else:
+                                await bot.send_document(chat_id=target_chat_id, document=media_file, caption=plain_caption, reply_markup=keyboard)
+                            sent = True
+                        else:
+                            raise html_err
                 except Exception as e:
                     logger.error(f"[Bot] Error sending media to {target_chat_id}: {e}")
 
@@ -297,9 +329,18 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post: ProcessedPost):
             try:
                 await bot.send_message(chat_id=target_chat_id, text=text_to_send, reply_markup=keyboard, parse_mode="HTML")
             except Exception as e:
-                if "group chat was upgraded to a supergroup chat" in str(e):
-                    logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
-                logger.error(f"[Bot] Error sending message to {target_chat_id}: {e}")
+                if "can't parse entities" in str(e).lower() or "bad request" in str(e).lower():
+                    logger.warning(f"[Bot] HTML parse failed for {target_chat_id}, falling back to plain text: {e}")
+                    import re
+                    plain_text = re.sub(r'<[^>]+>', '', text_to_send)
+                    try:
+                        await bot.send_message(chat_id=target_chat_id, text=plain_text, reply_markup=keyboard)
+                    except Exception as e2:
+                        logger.error(f"[Bot] Fallback send failed: {e2}")
+                else:
+                    if "group chat was upgraded to a supergroup chat" in str(e):
+                        logger.error(f"[Bot] effective_moderator_chat_id is outdated due to supergroup migration. Please update .env!")
+                    logger.error(f"[Bot] Error sending message to {target_chat_id}: {e}")
 
     # Отправляем ссылки и источник отдельным СМС в конце
     import re
