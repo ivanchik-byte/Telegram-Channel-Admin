@@ -1012,13 +1012,9 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
         
     sys_prompt = get_system_prompt(post_lang, custom_prompt)
     
-    full_edit_prompt = (
-        f"{sys_prompt}\n\n---\n\n"
-        f"Вот текущий текст поста:\n{text}\n\n---\n\n"
-        f"Инструкция по редактированию:\n{instruction}"
-    )
     messages = [
-        {"role": "user", "content": full_edit_prompt}
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": f"Вот текущий текст поста:\n\n{text}\n\nИнструкция по редактированию/доработке:\n{instruction}"}
     ]
 
     

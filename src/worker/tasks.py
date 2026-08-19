@@ -67,12 +67,13 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
 
     for attempt, delay in enumerate(backoff_delays):
         try:
-            full_user_content = f"{system_prompt}\n\n<source_draft>\n{text}\n</source_draft>"
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Вот исходный черновик/материал для поста:\n\n{text}\n\nНапиши на его основе полноценный пост для Telegram в соответствии с инструкциями."}
+            ]
             response = await client.chat.completions.create(
                 model=settings.AI_MODEL,
-                messages=[
-                    {"role": "user", "content": full_user_content}
-                ],
+                messages=messages,
                 extra_body=settings.AI_EXTRA_BODY or {},
                 timeout=60.0
             )
@@ -81,7 +82,6 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
                 from src.core.utils import clean_post_output
                 content = clean_post_output(content)
             return content if content else None
-
         except (APITimeoutError, asyncio.TimeoutError) as e:
             logger.error(f"[Worker] Пост {post_id}: Таймаут ожидания ответа ИИ ({settings.AI_MODEL} на {settings.AI_BASE_URL}): {e}")
             if attempt < len(backoff_delays) - 1:
