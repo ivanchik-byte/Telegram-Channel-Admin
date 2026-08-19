@@ -398,8 +398,9 @@ async def reply_moderation(message: Message, bot: Bot):
         count_stmt = select(func.count()).select_from(ProcessedPost).where(ProcessedPost.status == 'moderating')
         total = (await session.execute(count_stmt)).scalar() or 0
         
-    await message.reply(i18n.get('mod_remaining', count=total))
-    await send_mod_card_to_chat(bot, message.chat.id, post)
+    if post:
+        await message.reply(i18n.get('mod_remaining', count=total))
+        await send_mod_card_to_chat(bot, message.chat.id, post)
 
 
 @router.callback_query(F.data.startswith("edit_"), IsModeratorFilter())
@@ -970,10 +971,13 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
         
     sys_prompt = get_system_prompt(post_lang, custom_prompt)
     
+    full_edit_prompt = (
+        f"{sys_prompt}\n\n---\n\n"
+        f"Вот текущий текст поста:\n{text}\n\n---\n\n"
+        f"Инструкция по редактированию:\n{instruction}"
+    )
     messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": text},
-        {"role": "user", "content": i18n.get('ai_edit_instruction', instruction=instruction)}
+        {"role": "user", "content": full_edit_prompt}
     ]
 
     
@@ -984,7 +988,11 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
             extra_body=settings.AI_EXTRA_BODY or {},
             timeout=60.0
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        if content:
+            from src.core.utils import clean_post_output
+            content = clean_post_output(content)
+        return content or None
     except Exception as e:
         logger.error(f"[AI Custom Edit] Error: {e}")
         return None

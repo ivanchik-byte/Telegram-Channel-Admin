@@ -192,6 +192,24 @@ LANGUAGE=en                                                                # Def
 
 ---
 
+## AI System Prompt Customization
+
+The project comes with a default author's system prompt tailored for a tech & AI Telegram channel ([t.me/ivanchik_byte](https://t.me/ivanchik_byte)) following a 4-part structure: *Headline -> Event Context -> Step-by-Step Pipeline -> Practitioner Takeaway*.
+
+If your channel covers a different niche (crypto, gaming, business, marketing, general news), **you should customize the system prompt to match your desired tone and format**:
+
+### Method 1: Via Telegram Bot (On-the-Fly)
+- Send `/prompt` in Telegram for the interactive prompt management menu.
+- Or use `/set_prompt <your custom prompt text>`.
+- Use `/reset_prompt` anytime to restore the default prompt.
+
+### Method 2: In Source Code
+- Open `src/core/prompts.py`.
+- Edit `SYSTEM_PROMPT_REWRITE_RU` (for Russian) and `SYSTEM_PROMPT_REWRITE_EN` (for English).
+- Restart the worker service: `docker compose restart worker`.
+
+---
+
 ## Moderation Card Workflow
 
 When a post is ready, the bot sends an interactive card to your moderation chat:
