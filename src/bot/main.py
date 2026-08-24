@@ -7,7 +7,8 @@ from src.database.engine import init_db
 
 
 async def main():
-    logger.info("Starting Telegram Moderator Bot...")
+    from src.core.constants import APP_VERSION
+    logger.info(f"Starting Telegram Moderator Bot v{APP_VERSION}...")
 
     if not settings.ADMIN_IDS:
         logger.error("ADMIN_IDS is empty. Refusing to start.")
@@ -15,6 +16,13 @@ async def main():
 
     # Ensure database tables and columns are created
     await init_db()
+
+    # Sync UI language from DB once at startup; later changes go through
+    # update_settings -> i18n.set_language explicitly
+    from src.database.engine import async_session_maker
+    from src.database.repository import SettingsRepository
+    async with async_session_maker() as session:
+        await SettingsRepository.sync_i18n_language(session)
 
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()

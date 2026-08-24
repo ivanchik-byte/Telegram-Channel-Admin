@@ -18,16 +18,12 @@ TRANSLATIONS = {
         'msg_no_text_to_publish': 'Ошибка: нет текста для публикации.',
         'msg_published': '<b>Опубликовано</b>',
         'msg_published_alert': 'Опубликовано!',
-        'msg_publish_error': 'Ошибка при публикации.',
         'msg_rejected': '<b>Отклонено</b>',
         'msg_rejected_alert': 'Пост отклонен.',
-        'msg_edit_instruction': 'Для редактирования скопируйте текст ниже, внесите правки и отправьте команду:\n<code>/edit {post_id} Ваш исправленный текст</code>',
         'msg_edit_wrong_format': 'Неверный формат команды. Используйте:\n/edit <ID_поста> <Новый текст>',
         'msg_edit_id_not_number': 'Неверный формат или ID не является числом.',
         'msg_edit_post_not_found': 'Пост не найден или уже не находится на модерации (возможно, уже обработан).',
         'msg_edit_success': 'Текст обновлен! Новая карточка отправлена.',
-        'card_new_post': '<b>Новый пост из источника {channel_id}</b>',
-        'card_edited_post': '<b>Новый пост из источника {channel_id} (Исправлено)</b>',
 
         # --- Reply keyboard buttons ---
         'kb_moderation': '\U0001f4cb Модерация',
@@ -54,6 +50,7 @@ TRANSLATIONS = {
         'action_by': '👤 Действие от: {username}',
         'publish_error': '❌ Ошибка публикации: {error}',
         'extra_links': '<b>Дополнительные ссылки:</b>',
+        'parser_hidden_links': 'Ссылки из поста:',
         'source_link': '<b>Источник:</b> <a href=\'{url}\'>Перейти к оригиналу</a>',
 
         # --- /start ---
@@ -205,6 +202,7 @@ TRANSLATIONS = {
         # --- Worker/tasks ---
         'worker_no_posts': 'Нет накопленных постов за последние {hours}ч.',
         'worker_best_selected': 'Выбрано {selected} постов из {total} кандидатов. Лучший пост сразу отправлен на модерацию, остальные {queued} добавлены в очередь.',
+        'worker_best_invalid': '⚠️ ИИ не смог корректно выбрать лучшие посты из {total} кандидатов (мусорный ответ). Посты оставлены без изменений, попробуйте ещё раз.',
 
         # --- Language Setup & Settings ---
         'start_select_ui_lang': '🌐 <b>Шаг 1 из 2: Выберите язык интерфейса бота</b>\n(Select bot interface language):',
@@ -234,6 +232,7 @@ TRANSLATIONS = {
         'prompt_updated': '✅ <b>Системный промпт успешно обновлен!</b>\nНовый размер: {length} символов.',
         'prompt_reset_done': '✅ Системный промпт сброшен на стандартный ({lang})!',
         'prompt_canceled': 'Изменение промпта отменено.',
+        'action_cancelled': 'Действие отменено.',
         'prompt_full_title': '📋 <b>Полный системный промпт ({type}):</b>\n\n',
 
         # --- Time units ---
@@ -257,16 +256,12 @@ TRANSLATIONS = {
         'msg_no_text_to_publish': 'Error: no text to publish.',
         'msg_published': '<b>Published</b>',
         'msg_published_alert': 'Published!',
-        'msg_publish_error': 'Error during publication.',
         'msg_rejected': '<b>Rejected</b>',
         'msg_rejected_alert': 'Post rejected.',
-        'msg_edit_instruction': 'To edit, copy the text below, make changes and send the command:\n<code>/edit {post_id} Your corrected text</code>',
         'msg_edit_wrong_format': 'Invalid command format. Use:\n/edit <post_ID> <New text>',
         'msg_edit_id_not_number': 'Invalid format or ID is not a number.',
         'msg_edit_post_not_found': 'Post not found or no longer in moderation (possibly already processed).',
         'msg_edit_success': 'Text updated! New card sent.',
-        'card_new_post': '<b>New post from source {channel_id}</b>',
-        'card_edited_post': '<b>New post from source {channel_id} (Edited)</b>',
 
         # --- Reply keyboard buttons ---
         'kb_moderation': '\U0001f4cb Moderation',
@@ -293,6 +288,7 @@ TRANSLATIONS = {
         'action_by': '👤 Action by: {username}',
         'publish_error': '❌ Publish error: {error}',
         'extra_links': '<b>Additional links:</b>',
+        'parser_hidden_links': 'Links from the post:',
         'source_link': '<b>Source:</b> <a href=\'{url}\'>Go to original</a>',
 
         # --- /start ---
@@ -444,6 +440,7 @@ TRANSLATIONS = {
         # --- Worker/tasks ---
         'worker_no_posts': 'No accumulated posts from the last {hours}h.',
         'worker_best_selected': 'Selected {selected} posts out of {total} candidates. Best post sent to moderation immediately, remaining {queued} added to queue.',
+        'worker_best_invalid': '⚠️ The AI failed to pick the best posts out of {total} candidates (garbage response). Posts left untouched, please try again.',
 
         # --- Language Setup & Settings ---
         'start_select_ui_lang': '🌐 <b>Step 1 of 2: Select bot interface language</b>\n(Выберите язык интерфейса бота):',
@@ -473,6 +470,7 @@ TRANSLATIONS = {
         'prompt_updated': '✅ <b>AI system prompt successfully updated!</b>\nLength: {length} characters.',
         'prompt_reset_done': '✅ AI system prompt reverted to default ({lang})!',
         'prompt_canceled': 'Prompt update cancelled.',
+        'action_cancelled': 'Action cancelled.',
         'prompt_full_title': '📋 <b>Full System Prompt ({type}):</b>\n\n',
 
         # --- Time units ---
