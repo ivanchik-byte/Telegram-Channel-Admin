@@ -1,6 +1,6 @@
 from arq.connections import RedisSettings
 from src.core.config import settings
-from src.worker.tasks import process_post_task, find_best_post_task, clean_old_posts_cron
+from src.worker.tasks import process_post_task, find_best_post_task, clean_old_posts_cron, requeue_stuck_posts_cron
 from src.core.logger import logger
 from arq.cron import cron
 
@@ -11,9 +11,15 @@ from openai import AsyncOpenAI
 
 
 async def startup(ctx):
-    logger.info("Arq worker is starting...")
-    from src.database.engine import init_db
+    from src.core.constants import APP_VERSION
+    logger.info(f"Arq worker v{APP_VERSION} is starting...")
+    from src.database.engine import init_db, async_session_maker
+    from src.database.repository import SettingsRepository
     await init_db()
+
+    # Sync UI language for worker-sent notifications (same rationale as the bot)
+    async with async_session_maker() as session:
+        await SettingsRepository.sync_i18n_language(session)
 
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     ctx['bot'] = bot
@@ -36,9 +42,11 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_post_task, find_best_post_task, clean_old_posts_cron]
+    functions = [process_post_task, find_best_post_task, clean_old_posts_cron, requeue_stuck_posts_cron]
     cron_jobs = [
-        cron(clean_old_posts_cron, minute=0, hour=3) # run daily at 03:00 UTC
+        cron(clean_old_posts_cron, minute=0, hour=3),  # daily at 03:00 UTC
+        # Reaper: unstick posts stuck in 'ai_processing' after a crash
+        cron(requeue_stuck_posts_cron, minute=set(range(0, 60, 15))),
     ]
     on_startup = startup
     on_shutdown = shutdown

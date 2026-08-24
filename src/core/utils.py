@@ -1,4 +1,12 @@
 from datetime import timedelta
+import re
+from html import unescape
+
+
+def strip_html(value: str) -> str:
+    """Strips HTML tags AND unescapes entities — result is clean plain text."""
+    return unescape(re.sub(r'<[^>]+>', '', value))
+
 
 def parse_time_suffix(time_str: str) -> timedelta | None:
     """
@@ -138,10 +146,63 @@ def clean_post_output(text: str) -> str:
     if not text:
         return ""
     import re
-    # 1. Remove XML wrapper tags if model echoed them
-    text = re.sub(r"^<\w+>\s*|\s*</\w+>$", "", text.strip())
+    # 1. Remove XML wrapper tags if model echoed them.
+    # Only strip known wrapper tags so Telegram <b>/<i>/<code> survive
+    text = re.sub(r"^<(?:post|article|output)>\s*|\s*</(?:post|article|output)>$", "", text.strip(), flags=re.IGNORECASE)
     # 2. Strip conversational preambles
     text = re.sub(r"^(Вот (готовый )?пост|Here is the (rewritten )?post):?\s*\n+", "", text, flags=re.IGNORECASE)
     # 3. Replace cross-lingual tokenizer artifact 'như'
     text = re.sub(r"\bnhư\b", "таких как", text, flags=re.IGNORECASE)
     return text.strip()
+
+
+def delete_media_file(path: str | None) -> bool:
+    """
+    Delete a post media file from disk. Never raises.
+    Returns True when a file was actually removed.
+    """
+    if not path:
+        return False
+    import os
+    try:
+        abs_path = os.path.abspath(path)
+        # Only allow deletions inside the media storage directory
+        media_root = os.path.abspath('data/media')
+        if os.path.commonpath([abs_path, media_root]) != media_root:
+            return False
+        if os.path.isfile(abs_path):
+            os.remove(abs_path)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def split_message_text(text: str, limit: int = 4096) -> list[str]:
+    """Splits text into chunks that each fit Telegram's message limit.
+
+    Splits on paragraph boundaries when possible, hard-slices overlong lines.
+    Safe to format each chunk with format_telegram_html() afterwards — it
+    balances tags per chunk.
+    """
+    if len(text) <= limit:
+        return [text] if text else []
+
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            # Hard-split a single overlong line
+            head, line = line[:limit], line[limit:]
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(head)
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks

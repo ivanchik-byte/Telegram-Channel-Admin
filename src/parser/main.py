@@ -70,20 +70,14 @@ async def check_force_parse(client: TelegramClient, channels: list):
                     for channel in target_channels:
                         try:
                             logger.info(f"Fetching from {channel}...")
-                            kwargs = {'limit': limit}
                             if offset_date:
-                                kwargs['offset_date'] = offset_date
-                                kwargs['reverse'] = True # to fetch from old to new, but we might want new to old
-                                # Actually, offset_date in iter_messages gets messages older than the date. 
-                                # We want messages NEWER than the date. 
-                                # Let's fetch until we hit a message older than offset_date.
-                                kwargs.pop('offset_date')
-                                kwargs.pop('reverse', None)
-                            
-                            async for msg in client.iter_messages(channel, **kwargs):
-                                if offset_date and msg.date and msg.date < offset_date:
-                                    break # Stop fetching when we reach messages older than our offset
+                                # reverse=True + offset_date yields messages NEWER than
+                                # offset_date (oldest first) without scanning all history
+                                iterator = client.iter_messages(channel, offset_date=offset_date, reverse=True)
+                            else:
+                                iterator = client.iter_messages(channel, limit=limit)
 
+                            async for msg in iterator:
                                 if msg.message:
                                     res = await new_message_handler(DummyEvent(msg, client))
                                     if res is not None:

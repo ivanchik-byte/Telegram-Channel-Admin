@@ -1,44 +1,34 @@
 import asyncio
-import re
-import hashlib
 from datetime import timedelta
 
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
-from aiogram.enums import ParseMode
-from html import escape
 
 from src.core.logger import logger
 from src.core.config import settings
 from src.core.prompts import SYSTEM_PROMPT_REWRITE
 from src.core.i18n import i18n
-from src.core.constants import TG_SAFE_MESSAGE_LIMIT
+from src.core.adfilter import contains_ad  # re-exported for backwards compatibility
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
 from sqlalchemy import select
 from src.database.models import ProcessedPost
 
-
-def contains_ad(text: str) -> bool:
-    if not text or not settings.parsed_ad_keywords:
-        return False
-
-    text_lower = text.lower()
-    for kw in settings.parsed_ad_keywords:
-        # Substring match is intentional for Russian morphology:
-        # "реклама" matches "рекламы", "рекламе", "рекламой" etc.
-        if kw in text_lower:
-            return True
-    return False
+# How long a post may sit in 'ai_processing' before the stale-lock reaper
+# considers the worker dead and requeues it.
+STALE_LOCK_SECONDS = 30 * 60
+# How long a duplicate may wait for its original to finish processing
+# before giving up (protects against infinite 30s deferral loops).
+DUPLICATE_MAX_WAIT = timedelta(hours=6)
 
 
-async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: str, media_path: str | None = None, media_type: str | None = None, source_link: str | None = None):
+
+async def send_moderation_card(ctx, post_id: int):
     """
-    Sends moderation card. 
-    Uses the common logic send_mod_card_to_chat from bot/handlers.
+    Sends moderation card.
+    Uses the common messaging layer (no aiogram Router dependency).
     """
-    from src.bot.handlers import send_mod_card_to_chat
-    
+    from src.bot.messaging import send_mod_card_to_chat
+
     async with async_session_maker() as session:
         stmt = select(ProcessedPost).where(ProcessedPost.id == post_id)
         result = await session.execute(stmt)
@@ -48,7 +38,9 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
             return
 
     try:
-        chat_id = int(settings.effective_moderator_chat_id) if settings.effective_moderator_chat_id.strip() else 0
+        # Telegram API accepts both numeric IDs and @usernames — no int() cast,
+        # which used to crash on @username moderator chats
+        chat_id = settings.effective_moderator_chat_id.strip()
         if chat_id:
             await send_mod_card_to_chat(ctx['bot'], chat_id, post)
         else:
@@ -60,7 +52,6 @@ async def send_moderation_card(ctx, post_id: int, source_channel_id: int, text: 
 async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, system_prompt: str | None = None) -> str | None:
     """AI rewrite with exponential backoff. Returns rewritten text or None on failure."""
     if not system_prompt:
-        from src.core.prompts import SYSTEM_PROMPT_REWRITE
         system_prompt = SYSTEM_PROMPT_REWRITE
 
     backoff_delays = [2, 4, 8]
@@ -118,9 +109,7 @@ async def process_post_task(ctx, post_id: int):
     import random
     
     post_text: str | None = None
-    post_source_channel_id: int | None = None
     is_duplicate_ready = False
-    duplicate_rewritten_text: str | None = None
 
     async with async_session_maker() as session:
         stmt = select(ProcessedPost).where(ProcessedPost.id == post_id)
@@ -155,17 +144,15 @@ async def process_post_task(ctx, post_id: int):
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=15))
             return
 
-        # Reserve post atomically
-        post = await PostRepository.atomic_status_update(session, post_id, 'queued', 'ai_processing')
+        # Reserve post atomically (also stamps locked_at for the stale-lock reaper)
+        post = await PostRepository.atomic_status_update(
+            session, post_id, 'queued', 'ai_processing', set_lock=True
+        )
         if not post:
             logger.info(f"[Worker] Пост {post_id} перехвачен другим воркером или изменил статус.")
             return
 
         post_text = post.text
-        post_source_channel_id = post.source_channel_id
-        post_media_path = post.media_path
-        post_media_type = post.media_type
-        post_source_link = post.source_link
 
         # Deduplication: search for a previously added post with the same hash
         duplicate_check_stmt = select(ProcessedPost).where(
@@ -176,6 +163,11 @@ async def process_post_task(ctx, post_id: int):
 
         if is_duplicate:
             logger.info(f"[Worker] Пост {post_id} определен как дубликат.")
+
+            if datetime.now(timezone.utc) - post.created_at > DUPLICATE_MAX_WAIT:
+                logger.error(f"[Worker] Дубликат {post_id} ждал оригинал слишком долго. Отмена.")
+                await PostRepository.update_status(session, post_id, 'failed', required_current_status='ai_processing')
+                return
 
             # Search for the original with already prepared rewritten_text
             orig_stmt = select(ProcessedPost).where(
@@ -218,7 +210,6 @@ async def process_post_task(ctx, post_id: int):
             # Copy rewritten_text and immediately move to 'moderating'
             await PostRepository.update_post_ready_for_moderation(session, post_id, orig_post.rewritten_text)
             logger.info(f"[Worker] Пост {post_id} (дубликат) скопировал текст из поста {orig_post.id}.")
-            duplicate_rewritten_text = orig_post.rewritten_text
             is_duplicate_ready = True
 
         else:
@@ -238,7 +229,7 @@ async def process_post_task(ctx, post_id: int):
     # Session closed - now safe to make long network calls
 
     if is_duplicate_ready:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, duplicate_rewritten_text, post_media_path, post_media_type, post_source_link)
+        await send_moderation_card(ctx, post_id)
         return
 
     # --- Step 2: AI-rewrite — DB session closed ---
@@ -266,7 +257,7 @@ async def process_post_task(ctx, post_id: int):
             logger.error(f"[Worker] Пост {post_id} переведен в статус failed.")
 
     if rewritten_text:
-        await send_moderation_card(ctx, post_id, post_source_channel_id, rewritten_text, post_media_path, post_media_type, post_source_link)
+        await send_moderation_card(ctx, post_id)
         
         # Update next_post_time after successful send
 
@@ -287,7 +278,7 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         
         if not posts:
             logger.info("[Worker] Нет постов для выбора.")
-            from src.bot.handlers import send_notification_to_all
+            from src.bot.messaging import send_notification_to_all
             await send_notification_to_all(ctx['bot'], i18n.get('worker_no_posts', hours=hours), requester_chat_id=requester_chat_id)
             return
 
@@ -309,28 +300,36 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
         best_ids_str = response.choices[0].message.content.strip()
         import re
         matches = re.findall(r'\d+', best_ids_str)
-        if matches:
-            best_ids = [int(m) for m in matches[:6]]
-        else:
+        if not matches:
             raise ValueError(f"Нет чисел в ответе: {best_ids_str}")
     except Exception as e:
         logger.error(f"[Worker] Ошибка при выборе лучшего поста: {e}")
         return
 
-    best_post_id = best_ids[0]
-    other_best_ids = best_ids[1:]
+    # LLMs hallucinate IDs: keep only numbers that are real candidates,
+    # otherwise a single invented ID would get every post marked as ad
+    candidate_ids = {p.id for p in posts}
+    best_ids = [int(m) for m in matches if int(m) in candidate_ids][:6]
+    if not best_ids:
+        logger.error(f"[Worker] ИИ вернул только несуществующие ID: {matches}. Посты не тронуты.")
+        from src.bot.messaging import send_notification_to_all
+        await send_notification_to_all(
+            ctx['bot'],
+            i18n.get('worker_best_invalid', total=len(posts)),
+            requester_chat_id=requester_chat_id
+        )
+        return
 
-    # 1. Process the best post immediately
+    best_post_id = best_ids[0]
+    other_best_ids = set(best_ids[1:])
+
+    # 1. Process the best post immediately (guarded acquisition)
     async with async_session_maker() as session:
-        stmt = select(ProcessedPost).where(ProcessedPost.id == best_post_id)
-        result = await session.execute(stmt)
-        best_post = result.scalars().first()
-        
-        if best_post and best_post.status in ['queued', 'accumulated']:
-            best_post = await PostRepository.atomic_status_update(session, best_post.id, best_post.status, 'ai_processing')
-            
+        best_post = await PostRepository.atomic_status_update(
+            session, best_post_id, ['queued', 'accumulated'], 'ai_processing', set_lock=True
+        )
+
     if best_post:
-        from src.worker.tasks import _call_ai_with_retry
         from src.core.prompts import get_system_prompt
         async with async_session_maker() as session:
             best_settings = await SettingsRepository.get_settings(session)
@@ -341,41 +340,76 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
 
         if rewritten:
             async with async_session_maker() as session:
-                await PostRepository.update_post_ready_for_moderation(session, best_post.id, rewritten)
-                await send_moderation_card(ctx, best_post.id, best_post.source_channel_id, rewritten, best_post.media_path, best_post.media_type, best_post.source_link)
+                success = await PostRepository.update_post_ready_for_moderation(
+                    session, best_post.id, rewritten, required_current_status='ai_processing'
+                )
+                if success:
+                    await send_moderation_card(ctx, best_post.id)
         else:
             async with async_session_maker() as session:
-                await PostRepository.update_status(session, best_post.id, 'failed')
+                await PostRepository.update_status(session, best_post.id, 'failed', required_current_status='ai_processing')
 
-    # 2. Queue the remaining best posts and mark the rest as filtered_ad
+    # 2. Queue the remaining selected posts and mark the rest as filtered_ad.
+    # All transitions are guarded so we never clobber a status changed meanwhile.
+    enqueued_count = 0
     async with async_session_maker() as session:
         for p in posts:
             if p.id == best_post_id:
                 continue
             if p.id in other_best_ids:
-                await PostRepository.update_status(session, p.id, 'queued')
-                await ctx['redis'].enqueue_job('process_post_task', p.id)
+                updated = await PostRepository.update_status(
+                    session, p.id, 'queued', required_current_status='accumulated'
+                )
+                if updated:
+                    await ctx['redis'].enqueue_job('process_post_task', p.id)
+                    enqueued_count += 1
             else:
-                await PostRepository.update_status(session, p.id, 'filtered_ad')
-                
-    if best_ids:
-        from src.bot.handlers import send_notification_to_all
-        await send_notification_to_all(
-            ctx['bot'], 
-            i18n.get('worker_best_selected', selected=len(best_ids), total=len(posts), queued=len(other_best_ids)), 
-            requester_chat_id=requester_chat_id
-        )
+                for current in ('accumulated', 'queued'):
+                    if await PostRepository.update_status(session, p.id, 'filtered_ad', required_current_status=current):
+                        break
+
+    from src.bot.messaging import send_notification_to_all
+    await send_notification_to_all(
+        ctx['bot'],
+        i18n.get('worker_best_selected', selected=len(best_ids), total=len(posts), queued=enqueued_count),
+        requester_chat_id=requester_chat_id
+    )
+
+async def requeue_stuck_posts_cron(ctx):
+    """Reaper: posts stuck in 'ai_processing' (crashed worker mid-AI-call) go back to the queue.
+
+    Without this, one crashed job blocks the whole auto-mode moderation slot forever.
+    Re-enqueues the jobs so the posts actually get processed again.
+    """
+    async with async_session_maker() as session:
+        requeued_ids = await PostRepository.requeue_stale_processing(session, STALE_LOCK_SECONDS)
+    if requeued_ids:
+        logger.warning(f"[Worker] Reaper: возвращено в очередь застрявших постов: {requeued_ids}")
+        for pid in requeued_ids:
+            await ctx['redis'].enqueue_job('process_post_task', pid)
 
 async def clean_old_posts_cron(ctx):
-    """Cron job to clean posts older than 48 hours"""
+    """Cron job to clean stale posts older than 48 hours.
+
+    Only terminal-state posts are removed. Published post hashes are kept
+    for deduplication; moderating/queued posts survive weekends untouched.
+    """
     logger.info("[Worker] Запуск очистки базы от постов старше 48 часов...")
     from datetime import datetime, timezone, timedelta
-    from sqlalchemy import delete
-    
+    from src.core.utils import delete_media_file
+
     async with async_session_maker() as session:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-        stmt = delete(ProcessedPost).where(ProcessedPost.created_at < cutoff)
-        result = await session.execute(stmt)
-        await session.commit()
-        deleted_count = result.rowcount
+        stmt = select(ProcessedPost).where(
+            ProcessedPost.created_at < cutoff,
+            ProcessedPost.status.in_(['rejected', 'failed', 'filtered_ad'])
+        )
+        old_posts = list((await session.execute(stmt)).scalars().all())
+        deleted_count = 0
+        for old_post in old_posts:
+            delete_media_file(old_post.media_path)
+            await session.delete(old_post)
+            deleted_count += 1
+            # Commit per row so one failure doesn't lose already-deleted files' rows
+            await session.commit()
         logger.info(f"[Worker] Очистка завершена. Удалено постов: {deleted_count}")

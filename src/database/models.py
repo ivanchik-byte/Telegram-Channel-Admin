@@ -23,11 +23,13 @@ class ProcessedPost(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+    # Set when the post enters 'ai_processing'; used by the stale-lock reaper
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         UniqueConstraint('source_channel_id', 'source_message_id', name='uq_post_source'),
         CheckConstraint(
-            "status IN ('seen', 'queued', 'ai_processing', 'processed', 'failed', 'moderating', 'published', 'rejected', 'filtered_ad', 'duplicate_content')",
+            "status IN ('seen', 'queued', 'ai_processing', 'processed', 'failed', 'moderating', 'published', 'rejected', 'filtered_ad', 'duplicate_content', 'accumulated')",
             name='chk_status'
         ),
     )

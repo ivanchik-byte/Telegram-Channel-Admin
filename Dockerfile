@@ -25,6 +25,9 @@ RUN pip install --no-cache /wheels/*
 
 COPY . .
 
-RUN mkdir -p /app/data/media
+RUN mkdir -p /app/data/media && chown -R appuser:appgroup /app/data
+
+# Run as non-root user
+USER appuser
 
 # Entrypoint will be defined in docker-compose.yml
