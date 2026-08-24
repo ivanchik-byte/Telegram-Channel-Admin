@@ -43,7 +43,11 @@ async def new_message_handler(event: events.NewMessage.Event):
 
     channel_id = event.chat_id
     message_id = event.id
-    
+
+    # Hash the original text BEFORE appending hidden links: link sets differ
+    # between reposts of the same content and would break deduplication
+    post_hash = calculate_post_hash(text)
+
     # Extract hidden links
     links = []
     if event.message.entities:
@@ -51,34 +55,35 @@ async def new_message_handler(event: events.NewMessage.Event):
         for ent in event.message.entities:
             if isinstance(ent, MessageEntityTextUrl):
                 links.append(ent.url)
-    
+
     if links:
         unique_links = list(set(links))
         text += f"\n\n{i18n.get('parser_hidden_links')}\n" + "\n".join(unique_links)
-        
-    post_hash = calculate_post_hash(text)
+
     source_link = get_telegram_link(event)
 
     async with async_session_maker() as session:
         settings = await SettingsRepository.get_settings(session)
-        
+
         # Check global pause
         if settings.pause_until and settings.pause_until > datetime.now(timezone.utc):
             logger.info(f"[Parser] Bot is paused until {settings.pause_until}. Ignoring post.")
             return
 
         mode = settings.mode
-        
+
         # Check advertising
-        from src.worker.tasks import contains_ad
+        from src.core.adfilter import contains_ad
         if contains_ad(text):
             logger.info(f"[Parser] Post {message_id} from {channel_id} filtered as ad during parsing.")
             initial_status = 'filtered_ad'
         elif mode == 'auto':
-            # Check limits
+            # Check limits: 1 slot for moderation + queue_limit slots for the queue.
+            # Single check right before insert; duplicate inserts are still protected
+            # by the UPSERT on (source_channel_id, source_message_id).
             mod_count, queued_count = await PostRepository.get_queue_counts(session)
             if mod_count >= 1 and queued_count >= settings.queue_limit:
-                logger.info(f"[Parser] Queue is full (1 in moderation, {settings.queue_limit} in queue). Ignoring post {message_id}.")
+                logger.info(f"[Parser] Queue is full ({mod_count} in moderation, {queued_count} in queue). Ignoring post {message_id}.")
                 return
             initial_status = 'queued'
         else:
@@ -95,7 +100,7 @@ async def new_message_handler(event: events.NewMessage.Event):
             media_type = 'video'
         elif event.message.document:
             media_type = 'document'
-        
+
         if media_type:
             import os
             os.makedirs('data/media', exist_ok=True)
@@ -109,18 +114,6 @@ async def new_message_handler(event: events.NewMessage.Event):
                 media_type = None
 
     async with async_session_maker() as session:
-        if initial_status == 'queued':
-            mod_count, queued_count = await PostRepository.get_queue_counts(session)
-            if mod_count >= 1 and queued_count >= settings.queue_limit:
-                logger.info(f"[Parser] Queue is full before saving (1 in moderation, {settings.queue_limit} in queue). Ignoring post {message_id}.")
-                if media_path:
-                    try:
-                        import os
-                        os.remove(media_path)
-                    except Exception:
-                        pass
-                return
-
         post_id = await PostRepository.process_new_post(
             session=session,
             channel_id=channel_id,
