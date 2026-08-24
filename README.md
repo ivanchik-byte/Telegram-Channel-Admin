@@ -4,6 +4,7 @@
 
 # Telegram Channel Admin (ИИ-Модератор и Куратор Контента)
 
+[![Version](https://img.shields.io/badge/Version-1.1.0-blue)](https://github.com/ivanchik-byte/Telegram-Channel-Admin)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 [![aiogram](https://img.shields.io/badge/aiogram-3.10-2CA5E0?logo=telegram&logoColor=white)](https://github.com/aiogram/aiogram)
