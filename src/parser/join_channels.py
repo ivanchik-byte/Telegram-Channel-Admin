@@ -17,7 +17,7 @@ async def main():
 
     logger.info("Connecting to Telegram for automatic subscription...")
 
-    for channel in settings.DONOR_CHANNEL_IDS:
+    for channel in settings.parsed_channels:
         channel_str = str(channel).strip()
         try:
             if "t.me/+" in channel_str or "t.me/joinchat/" in channel_str:

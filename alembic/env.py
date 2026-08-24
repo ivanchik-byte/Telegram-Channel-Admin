@@ -29,8 +29,9 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-# Override sqlalchemy.url with our settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Override sqlalchemy.url with our settings.
+# '%' must be doubled: ConfigParser treats it as interpolation syntax.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace('%', '%%'))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

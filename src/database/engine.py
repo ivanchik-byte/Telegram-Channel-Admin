@@ -10,19 +10,16 @@ async_session_maker = async_sessionmaker(
 )
 
 async def init_db():
+    """Creates tables that don't exist yet.
+
+    Schema changes live in alembic migrations (docker-compose runs the migrator
+    service before bot/worker/parser) — no ad-hoc ALTERs here to avoid two
+    sources of truth for the schema.
+    """
     from src.database.models import Base
-    from sqlalchemy import text
     from src.core.logger import logger
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-            try:
-                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS queue_limit INTEGER DEFAULT 5;"))
-                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS ui_lang VARCHAR(10) DEFAULT 'ru';"))
-                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS post_lang VARCHAR(10) DEFAULT 'ru';"))
-                await conn.execute(text("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS custom_prompt TEXT;"))
-            except Exception as e:
-                logger.debug(f"init_db columns check: {e}")
     except Exception as e:
         logger.warning(f"init_db execution warning: {e}")
-
