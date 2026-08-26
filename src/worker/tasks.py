@@ -75,7 +75,7 @@ async def _call_ai_with_retry(
                 model=settings.AI_MODEL,
                 messages=messages,
                 extra_body=settings.AI_EXTRA_BODY or {},
-                timeout=60.0
+                timeout=180.0
             )
             content = response.choices[0].message.content
             if content:

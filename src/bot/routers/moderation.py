@@ -330,7 +330,7 @@ async def ai_custom_edit(text: str, instruction: str) -> tuple[str | None, str |
             model=settings.AI_MODEL,
             messages=[{"role": "user", "content": full_edit_prompt}],
             extra_body=settings.AI_EXTRA_BODY or {},
-            timeout=60.0
+            timeout=180.0
         )
         content = response.choices[0].message.content
         if content:

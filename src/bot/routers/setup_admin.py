@@ -606,7 +606,7 @@ async def cmd_test_ai(message: Message):
                 {"role": "user", "content": "Ping test."}
             ],
             extra_body=settings.AI_EXTRA_BODY or {},
-            timeout=30.0
+            timeout=180.0
         )
         latency = round(time.time() - start_time, 2)
         reply_content = response.choices[0].message.content.strip() if response.choices else "OK"
@@ -623,16 +623,14 @@ async def cmd_test_ai(message: Message):
     except Exception as e:
         latency = round(time.time() - start_time, 2)
         cat, reason, detail = parse_ai_error(e)
-        clean_detail = escape(detail[:400] + ("..." if len(detail) > 400 else ""))
-
         error_card = (
-            f"🚨 <b>Сбой подключения к AI API</b> ({latency} сек)\n\n"
-            f"❌ <b>Причина:</b> {reason}\n"
-            f"🤖 <b>Модель:</b> <code>{escape(settings.AI_MODEL)}</code>\n"
-            f"🌐 <b>Эндпоинт:</b> <code>{escape(settings.AI_BASE_URL)}</code>\n\n"
-            f"📋 <b>Детали ошибки:</b>\n"
+            f"<b>[Сбой AI API]</b> ({latency} сек)\n\n"
+            f"<b>Причина:</b> {reason}\n"
+            f"<b>Модель:</b> <code>{escape(settings.AI_MODEL)}</code>\n"
+            f"<b>Эндпоинт:</b> <code>{escape(settings.AI_BASE_URL)}</code>\n\n"
+            f"<b>Детали ошибки:</b>\n"
             f"<blockquote><code>{clean_detail}</code></blockquote>\n\n"
-            f"💡 <b>Решение:</b>\n"
+            f"<b>Решение:</b>\n"
             f"• Проверьте актуальность модели в файле <code>.env</code> (параметр <code>AI_MODEL</code>).\n"
             f"• Проверьте баланс и валидность ключа (параметр <code>AI_API_KEY</code>)."
         )
