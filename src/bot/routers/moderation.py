@@ -301,12 +301,14 @@ async def receive_new_text(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
 
 
-async def ai_custom_edit(text: str, instruction: str) -> str | None:
+async def ai_custom_edit(text: str, instruction: str) -> tuple[str | None, str | None]:
     """
     Calls OpenAI to rewrite the text based on custom user instruction.
+    Returns (rewritten_text, error_message).
     """
     from src.core.prompts import get_system_prompt
     from src.core.clients import get_ai_client
+    from src.core.ai_notifier import parse_ai_error
 
     client = get_ai_client()
 
@@ -334,10 +336,11 @@ async def ai_custom_edit(text: str, instruction: str) -> str | None:
         if content:
             from src.core.utils import clean_post_output
             content = clean_post_output(content)
-        return content or None
+        return (content or None, None)
     except Exception as e:
         logger.error(f"[AI Custom Edit] Error: {e}")
-        return None
+        cat, reason, detail = parse_ai_error(e)
+        return (None, f"{reason}\n<code>{escape(detail[:200])}</code>")
 
 
 @router.callback_query(F.data.startswith("ai_edit_"), IsModeratorFilter())
@@ -389,10 +392,11 @@ async def receive_ai_instruction(message: Message, state: FSMContext, bot: Bot):
     progress_msg = await message.reply(i18n.get('ai_edit_progress'), parse_mode="HTML")
 
     # Edit the current draft, not the raw donor text
-    new_text = await ai_custom_edit(post.rewritten_text or post.text, instruction)
+    new_text, err_detail = await ai_custom_edit(post.rewritten_text or post.text, instruction)
 
     if not new_text:
-        await progress_msg.edit_text(i18n.get('ai_edit_failed'))
+        fail_text = f"{i18n.get('ai_edit_failed')}\n\n❌ <b>Причина:</b> {err_detail}" if err_detail else i18n.get('ai_edit_failed')
+        await progress_msg.edit_text(fail_text, parse_mode="HTML")
         await state.clear()
         return
 

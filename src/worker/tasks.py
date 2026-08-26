@@ -2,6 +2,8 @@ import asyncio
 from datetime import timedelta
 
 from openai import AsyncOpenAI, APIStatusError, APIConnectionError, APITimeoutError
+from aiogram import Bot
+from src.core.ai_notifier import notify_ai_error
 
 from src.core.logger import logger
 from src.core.config import settings
@@ -46,15 +48,22 @@ async def send_moderation_card(ctx, post_id: int):
         else:
             logger.error("[Worker] effective_moderator_chat_id пустой, некуда отправлять карточку модерации.")
     except Exception as e:
-        logger.error(f"[Worker] Ошибка при отправке карточки модерации: {e}")
+        logger.error(f"[Worker] Не удалось отправить пост {post_id} на модерацию: {e}")
 
 
-async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, system_prompt: str | None = None) -> str | None:
-    """AI rewrite with exponential backoff. Returns rewritten text or None on failure."""
+async def _call_ai_with_retry(
+    client: AsyncOpenAI,
+    text: str,
+    post_id: int,
+    system_prompt: str | None = None,
+    bot: Bot | None = None
+) -> str | None:
+    """AI rewrite with exponential backoff and Telegram error notifications."""
     if not system_prompt:
         system_prompt = SYSTEM_PROMPT_REWRITE
 
     backoff_delays = [2, 4, 8]
+    last_exception: Exception | None = None
 
     for attempt, delay in enumerate(backoff_delays):
         try:
@@ -74,6 +83,7 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
                 content = clean_post_output(content)
             return content if content else None
         except (APITimeoutError, asyncio.TimeoutError) as e:
+            last_exception = e
             logger.error(f"[Worker] Пост {post_id}: Таймаут ожидания ответа ИИ ({settings.AI_MODEL} на {settings.AI_BASE_URL}): {e}")
             if attempt < len(backoff_delays) - 1:
                 logger.warning(f"[Worker] Пост {post_id}: Повторная попытка через {delay} сек...")
@@ -81,6 +91,7 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
             else:
                 break
         except APIStatusError as e:
+            last_exception = e
             logger.error(f"[Worker] Пост {post_id}: Ошибка API ИИ ({e.status_code}): {e.message}")
             if e.status_code == 429 or (500 <= e.status_code < 600):
                 if attempt < len(backoff_delays) - 1:
@@ -89,6 +100,7 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
                     continue
             break
         except APIConnectionError as e:
+            last_exception = e
             logger.error(f"[Worker] Пост {post_id}: Ошибка соединения с ИИ API ({settings.AI_BASE_URL}): {e}")
             if attempt < len(backoff_delays) - 1:
                 logger.warning(f"[Worker] Пост {post_id}: Повтор через {delay} сек...")
@@ -96,8 +108,16 @@ async def _call_ai_with_retry(client: AsyncOpenAI, text: str, post_id: int, syst
                 continue
             break
         except Exception as e:
+            last_exception = e
             logger.error(f"[Worker] Пост {post_id}: Ошибка при запросе к ИИ: {e}")
             break
+
+    if last_exception and bot:
+        try:
+            await notify_ai_error(bot, last_exception, post_id=post_id)
+        except Exception as notify_err:
+            logger.error(f"[Worker] Ошибка при отправке уведомления в Telegram: {notify_err}")
+
     return None
 
 
@@ -236,7 +256,9 @@ async def process_post_task(ctx, post_id: int):
     from src.core.prompts import get_system_prompt
     client: AsyncOpenAI = ctx['ai_client']
     sys_prompt = get_system_prompt(post_lang, custom_prompt)
-    rewritten_text = await _call_ai_with_retry(client, post_text, post_id, system_prompt=sys_prompt)
+    rewritten_text = await _call_ai_with_retry(
+        client, post_text, post_id, system_prompt=sys_prompt, bot=ctx.get('bot')
+    )
 
 
     # --- Step 3: Finalization — new session ---
@@ -304,6 +326,11 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
             raise ValueError(f"Нет чисел в ответе: {best_ids_str}")
     except Exception as e:
         logger.error(f"[Worker] Ошибка при выборе лучшего поста: {e}")
+        if ctx.get('bot'):
+            try:
+                await notify_ai_error(ctx.get('bot'), e)
+            except Exception as notif_err:
+                logger.error(f"[Worker] Ошибка отправки уведомления: {notif_err}")
         return
 
     # LLMs hallucinate IDs: keep only numbers that are real candidates,
@@ -336,7 +363,9 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
             best_post_lang = getattr(best_settings, 'post_lang', 'ru')
             best_custom_prompt = getattr(best_settings, 'custom_prompt', None)
         best_sys_prompt = get_system_prompt(best_post_lang, best_custom_prompt)
-        rewritten = await _call_ai_with_retry(client, best_post.text, best_post.id, system_prompt=best_sys_prompt)
+        rewritten = await _call_ai_with_retry(
+            client, best_post.text, best_post.id, system_prompt=best_sys_prompt, bot=ctx.get('bot')
+        )
 
         if rewritten:
             async with async_session_maker() as session:

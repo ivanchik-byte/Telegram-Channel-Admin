@@ -578,3 +578,63 @@ async def cmd_parse(message: Message, command: CommandObject):
             await message.reply(i18n.get('parse_signal_limit', limit=limit, channels=target_str))
     except Exception as e:
         await message.reply(i18n.get('parse_signal_error', error=e))
+
+
+@router.message(Command("test_ai", "testai", "check_ai"), IsModeratorFilter())
+async def cmd_test_ai(message: Message):
+    """
+    Diagnostic command to verify connection and validity of the AI API key and model in real-time.
+    """
+    import time
+    from html import escape
+    from src.core.clients import get_ai_client
+    from src.core.ai_notifier import parse_ai_error
+
+    status_msg = await message.reply(
+        i18n.get('ai_test_testing', model=escape(settings.AI_MODEL), endpoint=escape(settings.AI_BASE_URL)),
+        parse_mode="HTML"
+    )
+
+    client = get_ai_client()
+    start_time = time.time()
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.AI_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a test ping bot. Respond with exactly one word: 'OK'."},
+                {"role": "user", "content": "Ping test."}
+            ],
+            extra_body=settings.AI_EXTRA_BODY or {},
+            timeout=30.0
+        )
+        latency = round(time.time() - start_time, 2)
+        reply_content = response.choices[0].message.content.strip() if response.choices else "OK"
+
+        await status_msg.edit_text(
+            i18n.get(
+                'ai_test_success',
+                model=escape(settings.AI_MODEL),
+                response=escape(reply_content),
+                latency=latency
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        latency = round(time.time() - start_time, 2)
+        cat, reason, detail = parse_ai_error(e)
+        clean_detail = escape(detail[:400] + ("..." if len(detail) > 400 else ""))
+
+        error_card = (
+            f"🚨 <b>Сбой подключения к AI API</b> ({latency} сек)\n\n"
+            f"❌ <b>Причина:</b> {reason}\n"
+            f"🤖 <b>Модель:</b> <code>{escape(settings.AI_MODEL)}</code>\n"
+            f"🌐 <b>Эндпоинт:</b> <code>{escape(settings.AI_BASE_URL)}</code>\n\n"
+            f"📋 <b>Детали ошибки:</b>\n"
+            f"<blockquote><code>{clean_detail}</code></blockquote>\n\n"
+            f"💡 <b>Решение:</b>\n"
+            f"• Проверьте актуальность модели в файле <code>.env</code> (параметр <code>AI_MODEL</code>).\n"
+            f"• Проверьте баланс и валидность ключа (параметр <code>AI_API_KEY</code>)."
+        )
+        await status_msg.edit_text(error_card, parse_mode="HTML")
+
