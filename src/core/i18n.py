@@ -144,7 +144,8 @@ TRANSLATIONS = {
             '- /lang — изменить язык интерфейса или язык постов (ИИ).\n'
             '- /prompt — интерактивное меню управления системным промптом (просмотр, изменение, сброс).\n'
             '- /set_prompt [текст] — быстро установить свой системный промпт для рерайта постов.\n'
-            '- /reset_prompt — сбросить промпт на стандартный по умолчанию.\n\n'
+            '- /reset_prompt — сбросить промпт на стандартный по умолчанию.\n'
+            '- /test_ai — проверить подключение к нейросети, валидность API ключа и модели.\n\n'
             '<b>Сбор постов и статистика:</b>\n'
             '- /status — посмотреть настройки, режим и статистику.\n'
             '- /mod — запросить старейший пост из очереди на немедленную проверку.\n'
@@ -235,10 +236,21 @@ TRANSLATIONS = {
         'action_cancelled': 'Действие отменено.',
         'prompt_full_title': '📋 <b>Полный системный промпт ({type}):</b>\n\n',
 
+        # --- AI Errors and Diagnostics ---
+        'ai_err_410': 'Модель устарела (End of Life) и больше не поддерживается провайдером API (HTTP 410 Gone).',
+        'ai_err_401': 'Недействительный или истекший API ключ (HTTP 401 Unauthorized).',
+        'ai_err_404': 'Модель или эндпоинт не найдены на сервере провайдера (HTTP 404 Not Found).',
+        'ai_err_429': 'Превышен лимит запросов или закончился баланс токенов (HTTP 429 Rate Limit / Quota Exceeded).',
+        'ai_err_402': 'Требуется оплата баланса API (HTTP 402 Payment Required).',
+        'ai_err_5xx': 'Временный сбой на стороне провайдера нейросети (HTTP 5xx Server Error).',
+        'ai_err_timeout': 'Превышено время ожидания ответа от нейросети (Timeout).',
+        'ai_err_connection': 'Не удалось установить соединение с сервером нейросети (Connection Error).',
+        'ai_test_testing': '⏳ <b>Проверка подключения к AI API...</b>\n\n• Модель: <code>{model}</code>\n• Эндпоинт: <code>{endpoint}</code>',
+        'ai_test_success': '✅ <b>AI API работает идеально!</b>\n\n• <b>Модель:</b> <code>{model}</code>\n• <b>Ответ нейросети:</b> <i>{response}</i>\n• <b>Время отклика:</b> <code>{latency} сек</code>',
+
         # --- Time units ---
         'time_days': 'д.',
         'time_hours': 'ч.',
-
         'time_minutes': 'мин.',
         'time_seconds': 'сек.',
     },
@@ -382,7 +394,8 @@ TRANSLATIONS = {
             '- /lang — change interface language or AI post generation language.\n'
             '- /prompt — interactive menu for AI system prompt (view, edit, reset).\n'
             '- /set_prompt [text] — quickly set custom AI system rewrite prompt.\n'
-            '- /reset_prompt — revert system prompt to default.\n\n'
+            '- /reset_prompt — revert system prompt to default.\n'
+            '- /test_ai — test AI connection, API key validity and active model.\n\n'
             '<b>Post Collection & Stats:</b>\n'
             '- /status — view settings, mode, and statistics.\n'
             '- /mod — request the oldest queued post for immediate review.\n'
@@ -472,6 +485,18 @@ TRANSLATIONS = {
         'prompt_canceled': 'Prompt update cancelled.',
         'action_cancelled': 'Action cancelled.',
         'prompt_full_title': '📋 <b>Full System Prompt ({type}):</b>\n\n',
+
+        # --- AI Errors and Diagnostics ---
+        'ai_err_410': 'The model is deprecated (End of Life) and no longer supported by the API provider (HTTP 410 Gone).',
+        'ai_err_401': 'Invalid or expired API Key (HTTP 401 Unauthorized).',
+        'ai_err_404': 'Model or endpoint not found on provider server (HTTP 404 Not Found).',
+        'ai_err_429': 'Rate limit exceeded or token balance exhausted (HTTP 429 Rate Limit / Quota Exceeded).',
+        'ai_err_402': 'Payment required for API balance (HTTP 402 Payment Required).',
+        'ai_err_5xx': 'Temporary failure on the AI provider server (HTTP 5xx Server Error).',
+        'ai_err_timeout': 'Timed out waiting for response from AI provider (Timeout).',
+        'ai_err_connection': 'Failed to establish connection to AI provider server (Connection Error).',
+        'ai_test_testing': '⏳ <b>Testing AI API connection...</b>\n\n• Model: <code>{model}</code>\n• Endpoint: <code>{endpoint}</code>',
+        'ai_test_success': '✅ <b>AI API works perfectly!</b>\n\n• <b>Model:</b> <code>{model}</code>\n• <b>Response:</b> <i>{response}</i>\n• <b>Latency:</b> <code>{latency} sec</code>',
 
         # --- Time units ---
         'time_days': 'd',
