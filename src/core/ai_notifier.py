@@ -123,17 +123,17 @@ async def notify_ai_error(
 
     # Prepare readable details
     clean_detail = escape(raw_detail[:350] + ("..." if len(raw_detail) > 350 else ""))
-    post_info = f"\n📝 <b>ID поста:</b> <code>#{post_id}</code>" if post_id else ""
+    post_info = f"\nID поста: <code>#{post_id}</code>" if post_id else ""
 
     text = (
-        f"🚨 <b>Внимание: Сбой генерации текста (AI API)</b>\n\n"
-        f"❌ <b>Причина:</b> {reason}\n"
-        f"🤖 <b>Модель:</b> <code>{escape(active_model)}</code>\n"
-        f"🌐 <b>Эндпоинт:</b> <code>{escape(active_base_url)}</code>"
+        f"<b>[Ошибка AI API] Сбой генерации текста</b>\n\n"
+        f"<b>Причина:</b> {reason}\n"
+        f"<b>Модель:</b> <code>{escape(active_model)}</code>\n"
+        f"<b>Эндпоинт:</b> <code>{escape(active_base_url)}</code>"
         f"{post_info}\n\n"
-        f"📋 <b>Детали ошибки:</b>\n"
+        f"<b>Детали ошибки:</b>\n"
         f"<blockquote><code>{clean_detail}</code></blockquote>\n\n"
-        f"💡 <b>Что делать:</b>\n"
+        f"<b>Что делать:</b>\n"
         f"• Если модель устарела (410 / 404), укажите актуальную модель в <code>.env</code> (параметр <code>AI_MODEL</code>).\n"
         f"• Если ошибка авторизации (401 / 429), обновите <code>AI_API_KEY</code>.\n"
         f"• Для быстрой проверки отправьте команду <code>/test_ai</code> в бот."

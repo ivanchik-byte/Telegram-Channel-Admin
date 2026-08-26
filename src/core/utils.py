@@ -146,6 +146,12 @@ def clean_post_output(text: str) -> str:
     if not text:
         return ""
     import re
+    # 0. Clean DeepSeek / thinking <think>...</think> tags if present
+    if "<think>" in text:
+        if "</think>" in text:
+            text = text.split("</think>")[-1].strip()
+        else:
+            text = text.split("<think>")[0].strip()
     # 1. Remove XML wrapper tags if model echoed them.
     # Only strip known wrapper tags so Telegram <b>/<i>/<code> survive
     text = re.sub(r"^<(?:post|article|output)>\s*|\s*</(?:post|article|output)>$", "", text.strip(), flags=re.IGNORECASE)
