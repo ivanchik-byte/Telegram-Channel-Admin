@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerabilities
+    url: https://github.com/ivanchik-byte/Telegram-Channel-Admin/security/policy
+    about: Please report security vulnerabilities privately according to our security policy.
+  - name: Questions and Discussions
+    url: https://github.com/ivanchik-byte/Telegram-Channel-Admin/discussions
+    about: Ask questions or discuss features with the community.

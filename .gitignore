@@ -18,5 +18,9 @@ data/
 !INSTALL.md
 !COMMANDS.md
 !COMMANDS_ru.md
+!CODE_OF_CONDUCT.md
+!CONTRIBUTING.md
+!SECURITY.md
+!.github/**/*.md
 .idea/
 .vscode/
