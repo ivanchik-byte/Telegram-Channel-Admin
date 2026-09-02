@@ -152,4 +152,4 @@ Examples:
 
 ## Questions or need help?
 
-If you have questions about the codebase or architecture, open an issue labeled `question` or join the community discussions.
+If you have questions about the codebase or architecture, open an issue labeled `question`, start a GitHub discussion, or reach out directly on Telegram at [@ivanchikbyte](https://t.me/ivanchikbyte).

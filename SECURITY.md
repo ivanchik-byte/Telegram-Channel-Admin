@@ -25,7 +25,7 @@ To report a vulnerability:
    Navigate to the **Security** tab of the repository on GitHub and select **Report a vulnerability** to open a private advisory.
 
 2. **Direct contact:**
-   If GitHub Private Vulnerability Reporting is unavailable, send an email to the repository owner directly through the contact email listed on their GitHub profile.
+   If GitHub Private Vulnerability Reporting is unavailable, contact the maintainer directly on Telegram at [@ivanchikbyte](https://t.me/ivanchikbyte) or via the contact email listed on their GitHub profile.
 
 ### What to include in your report
 
