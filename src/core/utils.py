@@ -184,6 +184,44 @@ def delete_media_file(path: str | None) -> bool:
     return False
 
 
+def cleanup_old_media_files(media_dir: str = 'data/media', max_age_hours: int = 12) -> int:
+    """
+    Scans media directory and deletes media files (photos, videos, documents)
+    whose last modification time is older than max_age_hours.
+    Returns the number of deleted files. Never raises.
+    """
+    import os
+    import time
+
+    if not os.path.isdir(media_dir):
+        return 0
+
+    now = time.time()
+    cutoff_seconds = max_age_hours * 3600
+    deleted_count = 0
+
+    try:
+        media_root = os.path.abspath(media_dir)
+        for fname in os.listdir(media_dir):
+            fpath = os.path.join(media_dir, fname)
+            try:
+                abs_path = os.path.abspath(fpath)
+                if os.path.commonpath([abs_path, media_root]) != media_root:
+                    continue
+                if os.path.isfile(abs_path) and not os.path.islink(abs_path):
+                    mtime = os.path.getmtime(abs_path)
+                    if now - mtime >= cutoff_seconds:
+                        os.remove(abs_path)
+                        deleted_count += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+    return deleted_count
+
+
+
 def split_message_text(text: str, limit: int = 4096) -> list[str]:
     """Splits text into chunks that each fit Telegram's message limit.
 

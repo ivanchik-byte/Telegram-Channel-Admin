@@ -2,7 +2,13 @@ import os
 
 import pytest
 
-from src.core.utils import parse_time_suffix, format_seconds_readable, strip_html, delete_media_file
+from src.core.utils import (
+    parse_time_suffix,
+    format_seconds_readable,
+    strip_html,
+    delete_media_file,
+    cleanup_old_media_files,
+)
 from datetime import timedelta
 
 
@@ -98,3 +104,54 @@ class TestDeleteMediaFile:
 
     def test_none_safe(self):
         assert delete_media_file(None) is False
+
+
+class TestCleanupOldMediaFiles:
+    @pytest.fixture()
+    def media_dir(self, tmp_path):
+        d = tmp_path / "media"
+        d.mkdir()
+        return d
+
+    def test_deletes_files_older_than_cutoff(self, media_dir):
+        import time
+        now = time.time()
+        old_file = media_dir / "old_photo.jpg"
+        new_file = media_dir / "new_video.mp4"
+
+        old_file.write_bytes(b"old")
+        new_file.write_bytes(b"new")
+
+        # Set old_file mtime to 13 hours ago (13 * 3600)
+        os.utime(str(old_file), (now - 13 * 3600, now - 13 * 3600))
+        # Set new_file mtime to 1 hour ago
+        os.utime(str(new_file), (now - 1 * 3600, now - 1 * 3600))
+
+        deleted = cleanup_old_media_files(str(media_dir), max_age_hours=12)
+
+        assert deleted == 1
+        assert not old_file.exists()
+        assert new_file.exists()
+
+    def test_custom_max_age(self, media_dir):
+        import time
+        now = time.time()
+        f1 = media_dir / "f1.jpg"
+        f1.write_bytes(b"1")
+        # 5 hours ago
+        os.utime(str(f1), (now - 5 * 3600, now - 5 * 3600))
+
+        deleted = cleanup_old_media_files(str(media_dir), max_age_hours=4)
+        assert deleted == 1
+        assert not f1.exists()
+
+    def test_nonexistent_directory_returns_zero(self):
+        assert cleanup_old_media_files("/nonexistent/directory/path/xyz", max_age_hours=12) == 0
+
+    def test_ignores_subdirectories(self, media_dir):
+        sub = media_dir / "subdir"
+        sub.mkdir()
+        deleted = cleanup_old_media_files(str(media_dir), max_age_hours=0)
+        assert deleted == 0
+        assert sub.exists()
+

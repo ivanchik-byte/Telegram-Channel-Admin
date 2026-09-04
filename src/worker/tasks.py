@@ -236,6 +236,7 @@ async def process_post_task(ctx, post_id: int):
             # Ad filtering
             if contains_ad(post_text):
                 logger.info(f"[Worker] Пост {post_id} отфильтрован как реклама.")
+                delete_media_file(post.media_path)
                 await PostRepository.update_status(
                     session, post_id, 'filtered_ad', required_current_status='ai_processing'
                 )
@@ -418,17 +419,23 @@ async def requeue_stuck_posts_cron(ctx):
             await ctx['redis'].enqueue_job('process_post_task', pid)
 
 async def clean_old_posts_cron(ctx):
-    """Cron job to clean stale posts older than 48 hours.
+    """Cron job to clean stale posts and media files older than 12 hours.
 
-    Only terminal-state posts are removed. Published post hashes are kept
-    for deduplication; moderating/queued posts survive weekends untouched.
+    1. Deletes media files (photos, videos, documents) on disk in data/media older than 12 hours.
+    2. Cleans database records of terminal-state posts ('rejected', 'failed', 'filtered_ad') older than 12 hours.
     """
-    logger.info("[Worker] Запуск очистки базы от постов старше 48 часов...")
+    logger.info("[Worker] Запуск очистки медиа и постов старше 12 часов...")
     from datetime import datetime, timezone, timedelta
-    from src.core.utils import delete_media_file
+    from src.core.utils import delete_media_file, cleanup_old_media_files
 
+    # Step 1: Clean media cache files on disk older than 12 hours
+    cleaned_media = cleanup_old_media_files(media_dir='data/media', max_age_hours=12)
+    if cleaned_media:
+        logger.info(f"[Worker] Удалено устаревших медиафайлов (фото/видео) старше 12 часов: {cleaned_media}")
+
+    # Step 2: Clean terminal-state posts older than 12 hours from database
     async with async_session_maker() as session:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=12)
         stmt = select(ProcessedPost).where(
             ProcessedPost.created_at < cutoff,
             ProcessedPost.status.in_(['rejected', 'failed', 'filtered_ad'])
@@ -441,4 +448,4 @@ async def clean_old_posts_cron(ctx):
             deleted_count += 1
             # Commit per row so one failure doesn't lose already-deleted files' rows
             await session.commit()
-        logger.info(f"[Worker] Очистка завершена. Удалено постов: {deleted_count}")
+        logger.info(f"[Worker] Очистка завершена. Удалено постов из базы: {deleted_count}")

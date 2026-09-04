@@ -44,7 +44,8 @@ async def shutdown(ctx):
 class WorkerSettings:
     functions = [process_post_task, find_best_post_task, clean_old_posts_cron, requeue_stuck_posts_cron]
     cron_jobs = [
-        cron(clean_old_posts_cron, minute=0, hour=3),  # daily at 03:00 UTC
+        # Hourly cleanup of media cache and terminal-state posts older than 12 hours
+        cron(clean_old_posts_cron, minute=0),
         # Reaper: unstick posts stuck in 'ai_processing' after a crash
         cron(requeue_stuck_posts_cron, minute=set(range(0, 60, 15))),
     ]
