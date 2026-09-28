@@ -44,13 +44,13 @@ def build_mod_card_keyboard(post_id: int) -> InlineKeyboardMarkup:
 
 
 async def _send_chunk(bot: Bot, chat_id: int, raw_chunk: str, reply_markup=None):
-    """Sends one raw chunk as HTML; falls back to plain text on parse errors."""
     try:
         return await bot.send_message(
             chat_id=chat_id,
             text=format_telegram_html(raw_chunk),
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=reply_markup,
         )
     except Exception as e:
         logger.warning(f"[Bot] HTML chunk failed ({e}), falling back to plain text")
@@ -58,6 +58,7 @@ async def _send_chunk(bot: Bot, chat_id: int, raw_chunk: str, reply_markup=None)
             chat_id=chat_id,
             text=strip_html(raw_chunk)[:4096],
             disable_web_page_preview=True,
+            reply_markup=reply_markup,
         )
 
 
@@ -76,12 +77,7 @@ async def send_long_message(bot: Bot, chat_id: int, raw_text: str, reply_markup=
 
 async def send_media_with_caption(bot: Bot, chat_id: int, media_type: str,
                                   media_file, raw_text: str, **extra):
-    """Send media with a caption built from RAW text.
-
-    Telegram caps captions at 1024 chars; when exceeded the media is sent bare
-    and the full text follows as separate message(s).
-    """
-    if len(raw_text) <= TG_CAPTION_LIMIT:
+    if len(format_telegram_html(raw_text)) <= TG_CAPTION_LIMIT:
         kwargs = dict(extra)
         kwargs["caption"] = format_telegram_html(raw_text)
         kwargs.setdefault("parse_mode", "HTML")
@@ -128,18 +124,13 @@ async def send_notification_to_all(bot: Bot, text: str, requester_chat_id: int |
 
 
 def cleanup_media(media_path: str | None, action: str) -> None:
-    """Helper to clean up media files after publication or rejection."""
-    if media_path and os.path.exists(media_path):
-        try:
-            os.remove(media_path)
-            logger.info(f"[Bot] Файл {media_path} удален после {action}.")
-        except Exception as e:
-            logger.error(f"[Bot] Не удалось удалить файл {media_path}: {e}")
+    from src.core.utils import delete_media_file
+    if delete_media_file(media_path):
+        logger.info(f"[Bot] Файл {media_path} удален после {action}.")
 
 
 async def send_mod_card_to_chat(bot: Bot, chat_id: int, post):
-    # RAW text: formatting/splitting happens inside the senders
-    raw_text = (post.rewritten_text or post.text)[:TG_SAFE_MESSAGE_LIMIT]
+    raw_text = post.rewritten_text or post.text or ""
 
     keyboard = build_mod_card_keyboard(post.id)
 
@@ -153,7 +144,8 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post):
         sent = False
         if post.media_path and post.media_type:
             abs_media_path = os.path.abspath(post.media_path)
-            if os.path.exists(abs_media_path):
+            media_root = os.path.abspath('data/media')
+            if os.path.commonpath([abs_media_path, media_root]) == media_root and os.path.exists(abs_media_path):
                 try:
                     media_file = FSInputFile(abs_media_path)
                     await send_media_with_caption(
@@ -167,7 +159,7 @@ async def send_mod_card_to_chat(bot: Bot, chat_id: int, post):
 
         if not sent:
             try:
-                await bot.send_message(chat_id=target_chat_id, text=format_telegram_html(raw_text), reply_markup=keyboard, parse_mode="HTML")
+                await send_long_message(bot, target_chat_id, raw_text, reply_markup=keyboard)
             except Exception as e:
                 logger.warning(f"[Bot] HTML card failed for {target_chat_id}, falling back to plain text: {e}")
                 try:

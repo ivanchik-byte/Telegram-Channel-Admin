@@ -95,8 +95,8 @@ async def reply_clear_db_confirm(message: Message):
 async def cb_quick_clear_yes(callback: CallbackQuery):
     async with async_session_maker() as session:
         stmt = update(ProcessedPost).where(
-            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating', 'ai_processing'])
-        ).values(status='failed')
+            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating'])
+        ).values(status='failed', locked_at=None)
         await session.execute(stmt)
         await session.commit()
     await callback.message.edit_text(i18n.get('clear_done'), parse_mode="HTML")
@@ -107,8 +107,7 @@ async def cb_quick_clear_yes(callback: CallbackQuery):
 async def cb_db_clear_yes(callback: CallbackQuery):
     from src.core.utils import delete_media_file
     async with async_session_maker() as session:
-        # Remove media files before dropping the rows
-        all_posts = list((await session.execute(select(ProcessedPost))).scalars().all())
+        all_posts = list((await session.execute(select(ProcessedPost).order_by(ProcessedPost.id.asc()).limit(500))).scalars().all())
         for old_post in all_posts:
             delete_media_file(old_post.media_path)
         stmt = delete(ProcessedPost)

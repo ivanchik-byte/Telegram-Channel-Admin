@@ -54,8 +54,12 @@ class PostRepository:
         if new_status != 'ai_processing':
             values['locked_at'] = None
         stmt = stmt.values(**values)
-        result = await session.execute(stmt)
-        await session.commit()
+        try:
+            result = await session.execute(stmt)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         return result.rowcount > 0
 
     @staticmethod
@@ -91,9 +95,13 @@ class PostRepository:
             ProcessedPost.id == post_id,
             ProcessedPost.status.in_(statuses)
         ).values(**values).returning(ProcessedPost)
-        result = await session.execute(stmt)
-        post = result.scalars().first()
-        await session.commit()
+        try:
+            result = await session.execute(stmt)
+            post = result.scalars().first()
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         return post
 
     @staticmethod
@@ -108,8 +116,7 @@ class PostRepository:
             update(ProcessedPost)
             .where(
                 ProcessedPost.status == 'ai_processing',
-                ProcessedPost.locked_at.is_not(None),
-                ProcessedPost.locked_at < cutoff
+                (ProcessedPost.locked_at.is_(None)) | (ProcessedPost.locked_at < cutoff),
             )
             .values(status='queued', locked_at=None)
             .returning(ProcessedPost.id)

@@ -35,7 +35,16 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             if not v.strip():
                 return []
-            return [int(x.strip()) for x in v.split(',') if x.strip()]
+            ids = []
+            for x in v.split(','):
+                x = x.strip()
+                if not x:
+                    continue
+                try:
+                    ids.append(int(x))
+                except ValueError:
+                    raise ValueError(f"Invalid ADMIN_IDS entry: {x!r}")
+            return ids
         if isinstance(v, int):
             return [v]
         return v
@@ -67,12 +76,13 @@ class Settings(BaseSettings):
         raw_channels = [c.strip() for c in self.CHANNELS_TO_TRACK.split(",") if c.strip()]
         parsed = []
         for c in raw_channels:
+            name = c.lstrip('@').strip()
+            if not name:
+                continue
             try:
-                # Try to parse as int (ID)
-                parsed.append(int(c))
+                parsed.append(int(name))
             except ValueError:
-                # Keep as string (Username) and remove leading @
-                parsed.append(c.lstrip('@'))
+                parsed.append(name)
         return parsed
 
     @property

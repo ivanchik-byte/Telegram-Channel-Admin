@@ -1,6 +1,14 @@
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import re
 from html import unescape
+
+
+def as_aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 def strip_html(value: str) -> str:
@@ -8,29 +16,28 @@ def strip_html(value: str) -> str:
     return unescape(re.sub(r'<[^>]+>', '', value))
 
 
-def parse_time_suffix(time_str: str) -> timedelta | None:
-    """
-    Parses a string like '30s', '30m', '12h', '1d' into a timedelta.
-    If no suffix is provided, assumes seconds for backward compatibility.
-    Returns None if parsing fails.
-    """
+def parse_time_suffix(time_str: str | None) -> timedelta | None:
+    if not isinstance(time_str, str):
+        return None
     time_str = time_str.strip().lower()
     if not time_str:
         return None
 
     try:
         if time_str.endswith('s'):
-            return timedelta(seconds=int(time_str[:-1]))
+            value = int(time_str[:-1])
         elif time_str.endswith('m'):
-            return timedelta(minutes=int(time_str[:-1]))
+            value = int(time_str[:-1]) * 60
         elif time_str.endswith('h'):
-            return timedelta(hours=int(time_str[:-1]))
+            value = int(time_str[:-1]) * 3600
         elif time_str.endswith('d'):
-            return timedelta(days=int(time_str[:-1]))
+            value = int(time_str[:-1]) * 86400
         else:
-            # default to seconds
-            return timedelta(seconds=int(time_str))
-    except ValueError:
+            value = int(time_str)
+        if value < 0:
+            return None
+        return timedelta(seconds=value)
+    except (ValueError, OverflowError):
         return None
 
 
@@ -113,13 +120,13 @@ def format_telegram_html(text: str) -> str:
                         stack.pop()
                         parts.append(f"</{tag_name}>")
                 else:
-                    # Dangling closing tag with no matching opening tag: discard
                     pass
             else:
                 if tag_name == 'a':
-                    href_match = re.search(r'href=[\'"]([^\'"]+)[\'"]', full_tag)
-                    if href_match:
-                        clean_href = escape(href_match.group(1), quote=True)
+                    href_match = re.search(r'href\s*=\s*[\'"]([^\'"]+)[\'"]', full_tag, flags=re.IGNORECASE)
+                    href = href_match.group(1).strip() if href_match else ""
+                    if href_match and href.lower().startswith(("http://", "https://")):
+                        clean_href = escape(href, quote=True)
                         parts.append(f'<a href="{clean_href}">')
                         stack.append('a')
                     else:
@@ -155,8 +162,7 @@ def clean_post_output(text: str) -> str:
     # 1. Remove XML wrapper tags if model echoed them.
     # Only strip known wrapper tags so Telegram <b>/<i>/<code> survive
     text = re.sub(r"^<(?:post|article|output)>\s*|\s*</(?:post|article|output)>$", "", text.strip(), flags=re.IGNORECASE)
-    # 2. Strip conversational preambles
-    text = re.sub(r"^(Вот (готовый )?пост|Here is the (rewritten )?post):?\s*\n+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^(Вот (готовый )?пост|Here is the (rewritten )?post):?\s*", "", text, flags=re.IGNORECASE)
     # 3. Replace cross-lingual tokenizer artifact 'như'
     text = re.sub(r"\bnhư\b", "таких как", text, flags=re.IGNORECASE)
     return text.strip()
@@ -236,14 +242,17 @@ def split_message_text(text: str, limit: int = 4096) -> list[str]:
     current = ""
     for line in text.split("\n"):
         while len(line) > limit:
-            # Hard-split a single overlong line
             head, line = line[:limit], line[limit:]
             if current:
                 chunks.append(current)
                 current = ""
-            chunks.append(head)
+            if head:
+                chunks.append(head)
+        if not line:
+            continue
         if len(current) + len(line) + 1 > limit:
-            chunks.append(current)
+            if current:
+                chunks.append(current)
             current = line
         else:
             current = f"{current}\n{line}" if current else line

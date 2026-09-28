@@ -58,15 +58,18 @@ async def new_message_handler(event: events.NewMessage.Event):
 
     if links:
         unique_links = list(set(links))
-        text += f"\n\n{i18n.get('parser_hidden_links')}\n" + "\n".join(unique_links)
+        safe_links = [u for u in unique_links if u.lower().startswith(("http://", "https://"))]
+        if safe_links:
+            text += f"\n\n{i18n.get('parser_hidden_links')}\n" + "\n".join(safe_links)
 
     source_link = get_telegram_link(event)
 
     async with async_session_maker() as session:
         settings = await SettingsRepository.get_settings(session)
 
-        # Check global pause
-        if settings.pause_until and settings.pause_until > datetime.now(timezone.utc):
+        from src.core.utils import as_aware
+        pause_until = as_aware(settings.pause_until)
+        if pause_until and pause_until > datetime.now(timezone.utc):
             logger.info(f"[Parser] Bot is paused until {settings.pause_until}. Ignoring post.")
             return
 
@@ -127,17 +130,19 @@ async def new_message_handler(event: events.NewMessage.Event):
         )
 
         if not post_id:
+            if media_path:
+                from src.core.utils import delete_media_file
+                delete_media_file(media_path)
             return None
 
     logger.info(f"[Parser] Intercepted new post from {channel_id}. Hash: {post_hash}. Saved with status: {initial_status}.")
 
     if initial_status == 'queued':
-        # Enqueue to Arq
-        pool = event.client.redis_pool
         try:
+            pool = event.client.redis_pool
             await pool.enqueue_job('process_post_task', post_id)
         except Exception as e:
             logger.error(f"[Parser] Error sending to Redis (Arq): {e}. Post {post_id} marked as failed.")
             async with async_session_maker() as rollback_session:
-                await PostRepository.update_status(rollback_session, post_id, 'failed')
+                await PostRepository.update_status(rollback_session, post_id, 'failed', required_current_status='queued')
     return post_id

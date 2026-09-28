@@ -112,7 +112,7 @@ async def notify_ai_error(
     active_base_url = base_url or settings.AI_BASE_URL
 
     now = time.time()
-    cache_key = (cat, "post" if post_id else "global")
+    cache_key = (cat, f"post_{post_id}" if post_id else "global")
     if not force:
         last_sent = _LAST_ALERT_TIMESTAMP.get(cache_key, 0.0)
         if (now - last_sent) < _ALERT_COOLDOWN_SECONDS:
@@ -139,13 +139,13 @@ async def notify_ai_error(
         f"• Для быстрой проверки отправьте команду <code>/test_ai</code> в бот."
     )
 
-    chat_ids: list[int] = []
+    chat_ids: list[str] = []
     if settings.effective_moderator_chat_id:
-        chat_ids.append(settings.effective_moderator_chat_id)
+        chat_ids.append(str(settings.effective_moderator_chat_id))
     if settings.ADMIN_IDS:
         for admin_id in settings.ADMIN_IDS:
-            if admin_id not in chat_ids:
-                chat_ids.append(admin_id)
+            if str(admin_id) not in chat_ids:
+                chat_ids.append(str(admin_id))
 
     sent_any = False
     for chat_id in chat_ids:

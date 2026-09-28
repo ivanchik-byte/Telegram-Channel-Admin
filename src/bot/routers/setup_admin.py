@@ -6,7 +6,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 
 from src.core.logger import logger
 from src.core.config import settings
@@ -338,9 +338,9 @@ async def get_status_data():
         bot_settings = await SettingsRepository.get_settings(session)
         mod_count, queued_count = await PostRepository.get_queue_counts(session)
 
-        stmt = select(ProcessedPost.id).where(ProcessedPost.status == 'accumulated')
+        stmt = select(func.count()).select_from(ProcessedPost).where(ProcessedPost.status == 'accumulated')
         acc_result = await session.execute(stmt)
-        accumulated_count = len(acc_result.all())
+        accumulated_count = acc_result.scalar() or 0
 
         lines = [
             i18n.get('status_title'),
@@ -415,11 +415,13 @@ async def cmd_best(message: Message, command: CommandObject):
     if command.args:
         try:
             delta = parse_time_suffix(command.args)
-            if delta:
-                # Round sub-hour windows up so "/best 45m" doesn't search 0 hours
+            if delta is not None:
                 hours = max(1, math.ceil(delta.total_seconds() / 3600))
+                hours = min(hours, 168)
             else:
                 hours = int(command.args)
+                if not 1 <= hours <= 168:
+                    raise ValueError()
         except ValueError:
             await message.reply(i18n.get('best_invalid_time'))
             return
@@ -462,11 +464,17 @@ async def cmd_interval(message: Message, command: CommandObject):
         interval_min = int(min_delta.total_seconds())
         interval_max = int(max_delta.total_seconds())
 
+        if interval_min < 0 or interval_max < 0:
+            raise ValueError()
+
         if interval_min > interval_max:
             interval_min, interval_max = interval_max, interval_min
 
         async with async_session_maker() as session:
-            await SettingsRepository.update_settings(session, interval_min=interval_min, interval_max=interval_max)
+            await SettingsRepository.update_settings(
+                session, interval_min=interval_min, interval_max=interval_max,
+                next_post_time=None,
+            )
 
         await message.reply(
             i18n.get('interval_set', min_val=format_seconds_readable(interval_min), max_val=format_seconds_readable(interval_max)),
@@ -483,7 +491,7 @@ async def cmd_pause(message: Message, command: CommandObject):
 
     if command.args:
         delta = parse_time_suffix(command.args)
-        if delta:
+        if delta is not None:
             pause_until = datetime.now(timezone.utc) + delta
             pause_sec = int(delta.total_seconds())
             msg_text = i18n.get('pause_timed', duration=format_seconds_readable(pause_sec), until=pause_until.strftime('%Y-%m-%d %H:%M:%S'))
@@ -516,8 +524,8 @@ async def cmd_status(message: Message):
 async def cmd_clear(message: Message):
     async with async_session_maker() as session:
         stmt = update(ProcessedPost).where(
-            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating', 'ai_processing'])
-        ).values(status='failed')
+            ProcessedPost.status.in_(['queued', 'accumulated', 'moderating'])
+        ).values(status='failed', locked_at=None)
         await session.execute(stmt)
         await session.commit()
     await message.reply(i18n.get('clear_done'), parse_mode="HTML")
@@ -527,8 +535,7 @@ async def cmd_clear(message: Message):
 async def cmd_clear_db(message: Message):
     from src.core.utils import delete_media_file
     async with async_session_maker() as session:
-        # Remove media files before dropping the rows
-        all_posts = list((await session.execute(select(ProcessedPost))).scalars().all())
+        all_posts = list((await session.execute(select(ProcessedPost).order_by(ProcessedPost.id.asc()).limit(500))).scalars().all())
         for old_post in all_posts:
             delete_media_file(old_post.media_path)
         stmt = delete(ProcessedPost)
@@ -568,7 +575,6 @@ async def cmd_parse(message: Message, command: CommandObject):
 
     redis = await get_redis_pool()
     try:
-        # format: limit|num_channels|time_offset|requester_chat_id
         await redis.set('force_parse', f"{limit}|{num_channels}|{time_offset}|{message.chat.id}")
 
         target_str = i18n.get('parse_channels_random', count=num_channels) if num_channels != '0' else i18n.get('parse_channels_all')
@@ -577,7 +583,7 @@ async def cmd_parse(message: Message, command: CommandObject):
         else:
             await message.reply(i18n.get('parse_signal_limit', limit=limit, channels=target_str))
     except Exception as e:
-        await message.reply(i18n.get('parse_signal_error', error=e))
+        await message.reply(i18n.get('parse_signal_error', error=escape(str(e))))
 
 
 @router.message(Command("test_ai", "testai", "check_ai"), IsModeratorFilter())
@@ -609,7 +615,8 @@ async def cmd_test_ai(message: Message):
             timeout=180.0
         )
         latency = round(time.time() - start_time, 2)
-        reply_content = response.choices[0].message.content.strip() if response.choices else "OK"
+        content = response.choices[0].message.content if response.choices else None
+        reply_content = (content or "OK").strip() or "OK"
 
         await status_msg.edit_text(
             i18n.get(
@@ -623,6 +630,7 @@ async def cmd_test_ai(message: Message):
     except Exception as e:
         latency = round(time.time() - start_time, 2)
         cat, reason, detail = parse_ai_error(e)
+        clean_detail = escape(detail[:350])
         error_card = (
             f"<b>[Сбой AI API]</b> ({latency} сек)\n\n"
             f"<b>Причина:</b> {reason}\n"

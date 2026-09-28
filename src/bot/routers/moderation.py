@@ -77,12 +77,13 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
 
         text_to_publish = post.rewritten_text
 
+        published = False
         try:
-            # Publish to target channel (senders take RAW text and format per chunk)
             published_with_media = False
             if post.media_path and post.media_type:
                 abs_path = os.path.abspath(post.media_path)
-                if os.path.exists(abs_path):
+                media_root = os.path.abspath('data/media')
+                if os.path.commonpath([abs_path, media_root]) == media_root and os.path.exists(abs_path):
                     media_file = FSInputFile(abs_path)
                     await send_media_with_caption(
                         bot, settings.TARGET_CHANNEL_ID,
@@ -93,6 +94,7 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
                     logger.warning(f"[Bot] Media file not found: {abs_path}. Publishing as text.")
             if not published_with_media:
                 await send_long_message(bot, settings.TARGET_CHANNEL_ID, text_to_publish)
+            published = True
 
             # Edit moderator message — escape user content before embedding in HTML
             action_by = escape(callback.from_user.username or callback.from_user.full_name)
@@ -120,16 +122,11 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
 
             logger.info(f"[Bot] Пост {post_id} опубликован в канал.")
         except Exception as e:
-            # Revert status back to moderating so we don't block the post permanently
-            async with async_session_maker() as rollback_session:
-                await PostRepository.update_status(rollback_session, post_id, 'moderating', required_current_status='published')
+            if not published:
+                async with async_session_maker() as rollback_session:
+                    await PostRepository.update_status(rollback_session, post_id, 'moderating', required_current_status='published')
             logger.error(f"[Bot] Ошибка публикации поста {post_id}: {e}")
             await callback.answer(i18n.get('publish_error', error=escape(str(e))), show_alert=True)
-
-
-def strip_html(value: str) -> str:
-    import re
-    return re.sub(r'<[^>]+>', '', value)
 
 
 @router.callback_query(F.data.startswith("reject_"), IsModeratorFilter())
@@ -235,7 +232,7 @@ async def reply_moderation(message: Message, bot: Bot):
                             pass
                     else:
                         async with async_session_maker() as new_session:
-                            await PostRepository.update_status(new_session, post_locked.id, 'failed')
+                            await PostRepository.update_status(new_session, post_locked.id, 'failed', required_current_status='ai_processing')
                         await progress_msg.edit_text(i18n.get('mod_ai_failed'))
                         return
                 else:
@@ -489,15 +486,31 @@ async def receive_new_media(message: Message, state: FSMContext, bot: Bot):
 
     os.makedirs('data/media', exist_ok=True)
     temp_filename = f"media_{post_id}_{int(message.date.timestamp())}"
-
+    ext = ""
+    size_ok = True
     try:
         file_info = await bot.get_file(file_id)
-        file_ext = os.path.splitext(file_info.file_path)[1]
-        new_filename = f"{temp_filename}{file_ext}"
+        ext = os.path.splitext(file_info.file_path or "")[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".pdf", ""):
+            ext = ""
+        if getattr(file_info, "file_size", None) and file_info.file_size > 20 * 1024 * 1024:
+            size_ok = False
+    except Exception as e:
+        await message.reply(i18n.get('media_save_failed', error=escape(str(e))))
+        await state.clear()
+        return
+
+    if not size_ok:
+        await message.reply(i18n.get('media_save_failed', error=escape("file too large")))
+        await state.clear()
+        return
+
+    try:
+        new_filename = f"{temp_filename}{ext}"
         media_path = os.path.join('data/media', new_filename)
         await bot.download_file(file_info.file_path, media_path)
     except Exception as e:
-        await message.reply(i18n.get('media_save_failed', error=e))
+        await message.reply(i18n.get('media_save_failed', error=escape(str(e))))
         await state.clear()
         return
 

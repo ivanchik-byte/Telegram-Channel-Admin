@@ -10,6 +10,7 @@ from src.core.config import settings
 from src.core.prompts import SYSTEM_PROMPT_REWRITE
 from src.core.i18n import i18n
 from src.core.adfilter import contains_ad  # re-exported for backwards compatibility
+from src.core.utils import delete_media_file, as_aware
 from src.database.engine import async_session_maker
 from src.database.repository import PostRepository
 from sqlalchemy import select
@@ -142,15 +143,16 @@ async def process_post_task(ctx, post_id: int):
 
         settings_obj = await SettingsRepository.get_settings(session)
         now = datetime.now(timezone.utc)
+        pause_until = as_aware(settings_obj.pause_until)
+        next_post_time = as_aware(settings_obj.next_post_time)
 
-        # Check global pause
-        if settings_obj.pause_until and settings_obj.pause_until > now:
+        if pause_until and pause_until > now:
             logger.debug(f"[Worker] Бот на паузе до {settings_obj.pause_until}. Откладываем пост {post_id} на 15 сек.")
             await ctx['redis'].enqueue_job('process_post_task', post_id, _defer_by=timedelta(seconds=15))
             return
 
-        if settings_obj.next_post_time and settings_obj.next_post_time > now:
-            delay = (settings_obj.next_post_time - now).total_seconds()
+        if next_post_time and next_post_time > now:
+            delay = (next_post_time - now).total_seconds()
             jitter = random.uniform(1.0, 5.0)
             defer_sec = delay + jitter
             logger.info(f"[Worker] Интервал не прошел. Откладываем пост {post_id} на {defer_sec:.1f} сек.")
@@ -184,7 +186,7 @@ async def process_post_task(ctx, post_id: int):
         if is_duplicate:
             logger.info(f"[Worker] Пост {post_id} определен как дубликат.")
 
-            if datetime.now(timezone.utc) - post.created_at > DUPLICATE_MAX_WAIT:
+            if datetime.now(timezone.utc) - as_aware(post.created_at) > DUPLICATE_MAX_WAIT:
                 logger.error(f"[Worker] Дубликат {post_id} ждал оригинал слишком долго. Отмена.")
                 await PostRepository.update_status(session, post_id, 'failed', required_current_status='ai_processing')
                 return
@@ -209,7 +211,14 @@ async def process_post_task(ctx, post_id: int):
                 if orig_any:
                     if orig_any.status in ('failed', 'filtered_ad', 'rejected'):
                         logger.info(f"[Worker] Оригинал {post_id} забракован (статус {orig_any.status}). Дубликат отменён.")
-                        await PostRepository.update_status(session, post_id, orig_any.status)
+                        await PostRepository.update_status(session, post_id, orig_any.status, required_current_status='ai_processing')
+                        return
+                    if orig_any.status in ('published', 'moderating', 'processed'):
+                        if orig_any.rewritten_text:
+                            await PostRepository.update_post_ready_for_moderation(session, post_id, orig_any.rewritten_text)
+                            is_duplicate_ready = True
+                        else:
+                            await PostRepository.update_status(session, post_id, 'failed', required_current_status='ai_processing')
                         return
                         
                     logger.warning(
@@ -224,7 +233,7 @@ async def process_post_task(ctx, post_id: int):
                     return
                 else:
                     logger.error(f"[Worker] Оригинал для дубликата {post_id} не найден. Отмена.")
-                    await PostRepository.update_status(session, post_id, 'failed')
+                    await PostRepository.update_status(session, post_id, 'failed', required_current_status='ai_processing')
                     return
 
             # Copy rewritten_text and immediately move to 'moderating'
@@ -274,9 +283,12 @@ async def process_post_task(ctx, post_id: int):
                 logger.warning(f"[Worker] Пост {post_id} изменил статус во время генерации текста. Результат отброшен.")
                 rewritten_text = None
         else:
+            failed_post = await PostRepository.get_post_by_id(session, post_id)
             await PostRepository.update_status(
                 session, post_id, 'failed', required_current_status='ai_processing'
             )
+            if failed_post is not None:
+                delete_media_file(failed_post.media_path)
             logger.error(f"[Worker] Пост {post_id} переведен в статус failed.")
 
     if rewritten_text:
@@ -286,26 +298,27 @@ async def process_post_task(ctx, post_id: int):
 
 
 async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = None):
+    hours = max(1, min(int(hours or 12), 168))
     logger.info(f"[Worker] Поиск лучшего поста за последние {hours} часов...")
     from src.database.repository import SettingsRepository
     from datetime import datetime, timezone
-    
+
     async with async_session_maker() as session:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         stmt = select(ProcessedPost).where(
             ProcessedPost.status.in_(['accumulated', 'queued']),
             ProcessedPost.created_at >= since
-        )
+        ).order_by(ProcessedPost.id.asc()).limit(200)
         result = await session.execute(stmt)
-        posts = result.scalars().all()
-        
-        if not posts:
-            logger.info("[Worker] Нет постов для выбора.")
-            from src.bot.messaging import send_notification_to_all
-            await send_notification_to_all(ctx['bot'], i18n.get('worker_no_posts', hours=hours), requester_chat_id=requester_chat_id)
-            return
+        posts = list(result.scalars().all())
+        post_ids = [p.id for p in posts]
+        post_data = [{"id": p.id, "text": (p.text or "")[:500]} for p in posts]
 
-        post_data = [{"id": p.id, "text": p.text[:500]} for p in posts]
+    if not posts:
+        logger.info("[Worker] Нет постов для выбора.")
+        from src.bot.messaging import send_notification_to_all
+        await send_notification_to_all(ctx['bot'], i18n.get('worker_no_posts', hours=hours), requester_chat_id=requester_chat_id)
+        return
         
     if getattr(settings, 'LANGUAGE', 'ru') == 'en':
         prompt = "Below is a list of posts. Choose up to 6 of the most interesting, viral, and useful posts. Return ONLY their numerical IDs comma-separated, without extra words, in descending order of interest (most awesome first).\n\n" + str(post_data)
@@ -320,7 +333,7 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
             extra_body=settings.AI_EXTRA_BODY or {},
             timeout=60.0
         )
-        best_ids_str = response.choices[0].message.content.strip()
+        best_ids_str = (response.choices[0].message.content or "").strip()
         import re
         matches = re.findall(r'\d+', best_ids_str)
         if not matches:
@@ -334,9 +347,7 @@ async def find_best_post_task(ctx, hours: int, requester_chat_id: int | None = N
                 logger.error(f"[Worker] Ошибка отправки уведомления: {notif_err}")
         return
 
-    # LLMs hallucinate IDs: keep only numbers that are real candidates,
-    # otherwise a single invented ID would get every post marked as ad
-    candidate_ids = {p.id for p in posts}
+    candidate_ids = set(post_ids)
     best_ids = [int(m) for m in matches if int(m) in candidate_ids][:6]
     if not best_ids:
         logger.error(f"[Worker] ИИ вернул только несуществующие ID: {matches}. Посты не тронуты.")
@@ -439,7 +450,7 @@ async def clean_old_posts_cron(ctx):
         stmt = select(ProcessedPost).where(
             ProcessedPost.created_at < cutoff,
             ProcessedPost.status.in_(['rejected', 'failed', 'filtered_ad'])
-        )
+        ).order_by(ProcessedPost.id.asc()).limit(200)
         old_posts = list((await session.execute(stmt)).scalars().all())
         deleted_count = 0
         for old_post in old_posts:

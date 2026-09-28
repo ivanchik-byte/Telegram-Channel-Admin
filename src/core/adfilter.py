@@ -6,14 +6,17 @@ without pulling in aiogram/openai dependencies.
 from src.core.config import settings
 
 
-def _stems(keyword: str) -> tuple[str, str]:
-    """Full keyword plus its stem (keyword minus the last letter).
+def _stems(keyword: str) -> tuple[str, ...]:
+    if len(keyword) <= 4:
+        return (keyword,)
+    return (keyword, keyword[:-1])
 
-    Plain substring matching misses Russian inflected forms: genitive
-    "рекламы" or instrumental "рекламой" do NOT contain "реклама".
-    Matching the stem catches all case forms while staying simple.
-    """
-    return keyword, keyword[:-1] if len(keyword) > 3 else keyword
+
+def _match(text_lower: str, form: str) -> bool:
+    if len(form) <= 4:
+        import re
+        return re.search(r"(?<![\w])" + re.escape(form) + r"(?![\w])", text_lower) is not None
+    return form in text_lower
 
 
 def contains_ad(text: str) -> bool:
@@ -22,9 +25,7 @@ def contains_ad(text: str) -> bool:
 
     text_lower = text.lower()
     for kw in settings.parsed_ad_keywords:
-        # Stem match is intentional for Russian morphology:
-        # stem "реклам" matches "реклама", "рекламы", "рекламой", ...
         for form in _stems(kw):
-            if form in text_lower:
+            if _match(text_lower, form):
                 return True
     return False
