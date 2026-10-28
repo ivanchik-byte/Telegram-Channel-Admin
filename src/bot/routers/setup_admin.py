@@ -25,7 +25,7 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if user_id not in settings.ADMIN_IDS:
         logger.warning(f"Unauthorized user {user_id} tried to use start command.")
@@ -35,6 +35,7 @@ async def cmd_start(message: Message):
         )
         return
 
+    await state.clear()
     async with async_session_maker() as session:
         bot_settings = await SettingsRepository.get_settings(session)
     # Explicit UI language sync (get_settings no longer mutates global i18n)
@@ -68,7 +69,7 @@ async def process_set_uilang(callback: CallbackQuery):
         await SettingsRepository.update_settings(session, ui_lang=chosen_lang)
 
     i18n.set_language(chosen_lang)
-    await callback.answer(i18n.get('lang_ui_set', lang="Русский" if chosen_lang == "ru" else "English"))
+    await callback.answer(i18n.get('lang_ui_set', language_name="Русский" if chosen_lang == "ru" else "English"))
 
     # Step 2: Select Posts Language (AI)
     post_lang_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -97,7 +98,7 @@ async def process_set_postlang(callback: CallbackQuery):
     async with async_session_maker() as session:
         await SettingsRepository.update_settings(session, post_lang=chosen_lang)
 
-    await callback.answer(i18n.get('lang_post_set', lang="Русский" if chosen_lang == "ru" else "English"))
+    await callback.answer(i18n.get('lang_post_set', language_name="Русский" if chosen_lang == "ru" else "English"))
 
     try:
         await callback.message.edit_text(
@@ -110,6 +111,12 @@ async def process_set_postlang(callback: CallbackQuery):
             i18n.get('lang_setup_complete'),
             parse_mode="HTML"
         )
+
+    await callback.message.answer(
+        i18n.get('start_welcome'),
+        reply_markup=get_main_reply_keyboard(),
+        parse_mode="HTML",
+    )
 
 
 @router.message(Command("settings"), IsModeratorFilter())
@@ -187,7 +194,7 @@ async def cmd_prompt_menu(event: Message | CallbackQuery):
         preview_text = custom_prompt.strip()[:250] + ("..." if len(custom_prompt.strip()) > 250 else "")
         preview = i18n.get('prompt_preview_label', text=escape(preview_text))
     else:
-        status = i18n.get('prompt_status_default', lang=post_lang.upper())
+        status = i18n.get('prompt_status_default', language_name=post_lang.upper())
         preview = ""
 
     text = i18n.get('prompt_menu_title', status=status, preview=preview)
@@ -232,7 +239,7 @@ async def cmd_reset_prompt(message: Message):
         bot_settings = await SettingsRepository.get_settings(session)
         await SettingsRepository.update_settings(session, custom_prompt=None)
         post_lang = getattr(bot_settings, 'post_lang', 'ru')
-    await message.reply(i18n.get('prompt_reset_done', lang=post_lang.upper()), parse_mode="HTML")
+    await message.reply(i18n.get('prompt_reset_done', language_name=post_lang.upper()), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "prompt_set", IsModeratorFilter())
@@ -248,7 +255,7 @@ async def cb_prompt_reset(callback: CallbackQuery):
         bot_settings = await SettingsRepository.get_settings(session)
         await SettingsRepository.update_settings(session, custom_prompt=None)
         post_lang = getattr(bot_settings, 'post_lang', 'ru')
-    await callback.answer(i18n.get('prompt_reset_done', lang=post_lang.upper()), show_alert=True)
+    await callback.answer(i18n.get('prompt_reset_done', language_name=post_lang.upper()), show_alert=True)
     await cmd_prompt_menu(callback)
 
 
@@ -452,8 +459,10 @@ async def cmd_interval(message: Message, command: CommandObject):
         await message.reply(i18n.get('interval_disabled'))
         return
 
-    parts = [p.strip() for p in re.split(r'[-\u2013\u2014]', args) if p.strip()]
+    parts = [p.strip() for p in re.split(r'[-\u2013\u2014]', args)]
     try:
+        if not 1 <= len(parts) <= 2:
+            raise ValueError()
         min_delta = parse_time_suffix(parts[0])
         max_delta = parse_time_suffix(parts[1]) if len(parts) > 1 else min_delta
 
@@ -480,7 +489,7 @@ async def cmd_interval(message: Message, command: CommandObject):
             i18n.get('interval_set', min_val=format_seconds_readable(interval_min), max_val=format_seconds_readable(interval_max)),
             parse_mode="HTML"
         )
-    except Exception:
+    except (ValueError, OverflowError):
         await message.reply(i18n.get('interval_invalid'))
 
 

@@ -13,6 +13,7 @@ import re
 from html import escape
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 
 from src.core.logger import logger
@@ -52,11 +53,14 @@ async def _send_chunk(bot: Bot, chat_id: int, raw_chunk: str, reply_markup=None)
             disable_web_page_preview=True,
             reply_markup=reply_markup,
         )
-    except Exception as e:
+    except TelegramBadRequest as e:
+        if "parse entities" not in e.message.lower():
+            raise
         logger.warning(f"[Bot] HTML chunk failed ({e}), falling back to plain text")
         return await bot.send_message(
             chat_id=chat_id,
             text=strip_html(raw_chunk)[:4096],
+            parse_mode=None,
             disable_web_page_preview=True,
             reply_markup=reply_markup,
         )
@@ -66,12 +70,21 @@ async def send_long_message(bot: Bot, chat_id: int, raw_text: str, reply_markup=
     """Sends raw text of any length: splits first, formats each chunk after."""
     chunks = split_message_text(raw_text, limit=TG_HTML_SPLIT_LIMIT)
     last_msg = None
-    for i, chunk in enumerate(chunks):
-        # Buttons only make sense on the last chunk
-        last_msg = await _send_chunk(
-            bot, chat_id, chunk,
-            reply_markup=reply_markup if i == len(chunks) - 1 else None,
-        )
+    sent_messages = []
+    try:
+        for i, chunk in enumerate(chunks):
+            last_msg = await _send_chunk(
+                bot, chat_id, chunk,
+                reply_markup=reply_markup if i == len(chunks) - 1 else None,
+            )
+            sent_messages.append(last_msg)
+    except Exception:
+        for sent_message in sent_messages:
+            try:
+                await sent_message.delete()
+            except Exception as delete_error:
+                logger.warning(f"[Bot] Could not remove a partial message: {delete_error}")
+        raise
     return last_msg
 
 
@@ -89,20 +102,23 @@ async def send_media_with_caption(bot: Bot, chat_id: int, media_type: str,
             return await bot.send_document(chat_id=chat_id, document=media_file, **kwargs)
 
     # Caption too long: media first, full text as separate message(s)
-    kwargs = {k: v for k, v in extra.items() if k != "parse_mode"}
+    kwargs = {k: v for k, v in extra.items() if k not in {"parse_mode", "reply_markup"}}
     if media_type == 'photo':
-        msg = await bot.send_photo(chat_id=chat_id, photo=media_file)
+        msg = await bot.send_photo(chat_id=chat_id, photo=media_file, **kwargs)
     elif media_type == 'video':
-        msg = await bot.send_video(chat_id=chat_id, video=media_file)
+        msg = await bot.send_video(chat_id=chat_id, video=media_file, **kwargs)
     else:
-        msg = await bot.send_document(chat_id=chat_id, document=media_file)
+        msg = await bot.send_document(chat_id=chat_id, document=media_file, **kwargs)
 
     try:
-        text_msg = await send_long_message(bot, chat_id, raw_text, reply_markup=kwargs.get("reply_markup"))
-    except Exception as e2:
-        logger.error(f"[Bot] Long-text send failed: {e2}")
-        text_msg = None
-    return text_msg or msg
+        return await send_long_message(bot, chat_id, raw_text, reply_markup=extra.get("reply_markup"))
+    except Exception:
+        # Avoid leaving a media-only publication when the text cannot be delivered.
+        try:
+            await msg.delete()
+        except Exception as delete_error:
+            logger.warning(f"[Bot] Could not remove media after text delivery failed: {delete_error}")
+        raise
 
 
 async def send_notification_to_all(bot: Bot, text: str, requester_chat_id: int | None = None):

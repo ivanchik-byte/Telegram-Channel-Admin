@@ -16,7 +16,7 @@ class IsModeratorFilter(BaseFilter):
             if not event.from_user:
                 return False
             user_id = event.from_user.id
-            if event.message is None:
+            if not isinstance(event.message, Message):
                 # Message too old or deleted: Telegram can't show it, but the
                 # moderator still deserves feedback instead of silence
                 await event.answer(i18n.get('msg_already_processed'), show_alert=True)

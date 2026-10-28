@@ -3,9 +3,22 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from src.core.i18n import i18n, TRANSLATIONS
 
 
+# Previously sent reply keyboards remain clickable after an upgrade.
+LEGACY_REPLY_LABELS = {
+    'kb_moderation': {'\U0001f4cb Модерация', '\U0001f4cb Moderation'},
+    'kb_status': {'\U0001f4ca Статус', '\U0001f4ca Status'},
+    'kb_parse_now': {'\U0001f504 Парсить сейчас', '\U0001f504 Parse now'},
+    'kb_find_best': {'\u2b50 Найти лучший пост', '\u2b50 Find best post'},
+    'kb_pause_8h': {'\u23f8 Пауза 8ч', '\u23f8 Pause 8h'},
+    'kb_resume': {'\u25b6 Возобновить', '\u25b6 Resume'},
+    'kb_clear_all': {'\U0001f5d1 Очистить все', '\U0001f5d1 Clear all'},
+    'kb_clear_db': {'\U0001f5c4 Очистить БД', '\U0001f5c4 Clear DB'},
+}
+
+
 def kb_variants(key: str) -> set:
     """All language variants of a reply-keyboard label."""
-    return {TRANSLATIONS[lang].get(key, '') for lang in ('ru', 'en')} - {''}
+    return ({TRANSLATIONS[lang].get(key, '') for lang in ('ru', 'en')} - {''}) | LEGACY_REPLY_LABELS.get(key, set())
 
 
 def get_main_reply_keyboard():

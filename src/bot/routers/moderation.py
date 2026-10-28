@@ -2,13 +2,14 @@ import os
 from html import escape
 
 from aiogram import Router, F, Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from src.core.logger import logger
 from src.core.config import settings
-from src.core.constants import TG_SAFE_MESSAGE_LIMIT, TG_MESSAGE_LIMIT
+from src.core.constants import TG_MESSAGE_LIMIT, TG_CAPTION_LIMIT
 from src.core.utils import format_telegram_html, strip_html
 from src.core.i18n import i18n
 from src.database.engine import async_session_maker
@@ -22,12 +23,33 @@ from src.bot.messaging import (
     send_media_with_caption,
     send_long_message,
     send_mod_card_to_chat,
-    build_mod_card_keyboard,
     cleanup_media,
 )
 
 
 router = Router()
+
+
+async def finish_mod_card(callback: CallbackQuery, post, status_key: str):
+    has_media = bool(callback.message.photo or callback.message.video or callback.message.document)
+    action_by = escape(callback.from_user.username or callback.from_user.full_name)
+    header = f"{i18n.get(status_key)} · #{post.id}\n{i18n.get('action_by', username=action_by)}"
+    original_text = strip_html(format_telegram_html(post.rewritten_text or post.text or ""))
+    limit = TG_CAPTION_LIMIT if has_media else TG_MESSAGE_LIMIT
+    # Telegram entity offsets use UTF-16; reserve space for the header and ellipsis.
+    excerpt_bytes = (limit - len(header.encode('utf-16-le')) // 2 - 3) * 2
+    excerpt = original_text.encode('utf-16-le')[:excerpt_bytes].decode('utf-16-le', errors='ignore')
+    if len(original_text) > len(excerpt):
+        excerpt = excerpt.rstrip() + "…"
+    summary = f"{header}\n\n{escape(excerpt)}"
+    try:
+        if has_media:
+            await callback.message.edit_caption(caption=summary, reply_markup=None, parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=summary, reply_markup=None, parse_mode="HTML")
+    except TelegramBadRequest as edit_error:
+        logger.warning(f"[Bot] Could not update moderation card for post {post.id}: {edit_error}")
+        await callback.message.edit_reply_markup(reply_markup=None)
 
 
 def _parse_post_id(callback_data: str) -> int | None:
@@ -96,28 +118,10 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
                 await send_long_message(bot, settings.TARGET_CHANNEL_ID, text_to_publish)
             published = True
 
-            # Edit moderator message — escape user content before embedding in HTML
-            action_by = escape(callback.from_user.username or callback.from_user.full_name)
-            display_text = format_telegram_html(text_to_publish[:TG_SAFE_MESSAGE_LIMIT])
-            new_text = f"{i18n.get('msg_published')}\n{i18n.get('action_by', username=action_by)}\n\n{display_text}"
-
-            try:
-                if callback.message.photo or callback.message.video or callback.message.document:
-                    await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
-                else:
-                    await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
-            except Exception as edit_err:
-                logger.warning(f"[Bot] Edit message failed with HTML, falling back to plain text: {edit_err}")
-                plain_new_text = strip_html(new_text)
-                if callback.message.photo or callback.message.video or callback.message.document:
-                    await callback.message.edit_caption(caption=plain_new_text, reply_markup=None)
-                else:
-                    await callback.message.edit_text(text=plain_new_text, reply_markup=None)
-
             cleanup_media(post.media_path, "публикации")
 
             await _apply_interval_after_moderation(session)
-
+            await finish_mod_card(callback, post, 'msg_published')
             await callback.answer(i18n.get('msg_published_alert'))
 
             logger.info(f"[Bot] Пост {post_id} опубликован в канал.")
@@ -125,8 +129,11 @@ async def process_publish(callback: CallbackQuery, bot: Bot):
             if not published:
                 async with async_session_maker() as rollback_session:
                     await PostRepository.update_status(rollback_session, post_id, 'moderating', required_current_status='published')
-            logger.error(f"[Bot] Ошибка публикации поста {post_id}: {e}")
-            await callback.answer(i18n.get('publish_error', error=escape(str(e))), show_alert=True)
+                logger.error(f"[Bot] Ошибка публикации поста {post_id}: {e}")
+                await callback.answer(i18n.get('publish_error', error=str(e))[:200], show_alert=True)
+                return
+            logger.error(f"[Bot] Post {post_id} was published, but moderation finalization failed: {e}")
+            await callback.answer(i18n.get('msg_published_alert'))
 
 
 @router.callback_query(F.data.startswith("reject_"), IsModeratorFilter())
@@ -142,26 +149,10 @@ async def process_reject(callback: CallbackQuery):
             await callback.answer(i18n.get('msg_already_processed'), show_alert=True)
             return
 
-        action_by = escape(callback.from_user.username or callback.from_user.full_name)
-        display_text = format_telegram_html((post.rewritten_text or "")[:TG_MESSAGE_LIMIT])
-        new_text = f"{i18n.get('msg_rejected')}\n{i18n.get('action_by', username=action_by)}\n\n{display_text}"
-
-        try:
-            if callback.message.photo or callback.message.video or callback.message.document:
-                await callback.message.edit_caption(caption=new_text, reply_markup=None, parse_mode="HTML")
-            else:
-                await callback.message.edit_text(text=new_text, reply_markup=None, parse_mode="HTML")
-        except Exception as edit_err:
-            logger.warning(f"[Bot] Edit message failed with HTML, falling back to plain text: {edit_err}")
-            plain_new_text = strip_html(new_text)
-            if callback.message.photo or callback.message.video or callback.message.document:
-                await callback.message.edit_caption(caption=plain_new_text, reply_markup=None)
-            else:
-                await callback.message.edit_text(text=plain_new_text, reply_markup=None)
-
         cleanup_media(post.media_path, "отклонения")
 
         await _apply_interval_after_moderation(session)
+        await finish_mod_card(callback, post, 'msg_rejected')
 
         await callback.answer(i18n.get('msg_rejected_alert'))
         logger.info(f"[Bot] Пост {post_id} отклонен.")
@@ -270,7 +261,8 @@ async def process_edit(callback: CallbackQuery, state: FSMContext):
     await state.update_data(post_id=post_id)
     await callback.message.delete()
     await callback.message.answer(i18n.get('edit_send_new_text', post_id=post_id))
-    await callback.message.answer((post.rewritten_text or "")[:4000])
+    await send_long_message(callback.bot, callback.message.chat.id, post.rewritten_text or post.text or "")
+    await callback.answer()
 
 
 @router.message(TextReplacement.waiting_for_text, IsModeratorFilter())
@@ -392,45 +384,33 @@ async def receive_ai_instruction(message: Message, state: FSMContext, bot: Bot):
     new_text, err_detail = await ai_custom_edit(post.rewritten_text or post.text, instruction)
 
     if not new_text:
-        fail_text = f"{i18n.get('ai_edit_failed')}\n\n❌ <b>Причина:</b> {err_detail}" if err_detail else i18n.get('ai_edit_failed')
+        fail_text = f"{i18n.get('ai_edit_failed')}\n\n{err_detail}" if err_detail else i18n.get('ai_edit_failed')
         await progress_msg.edit_text(fail_text, parse_mode="HTML")
         await state.clear()
         return
 
     # Update database
     async with async_session_maker() as session:
-        await PostRepository.atomic_edit_text(session, post_id, 'moderating', new_text)
+        updated_post = await PostRepository.atomic_edit_text(session, post_id, 'moderating', new_text)
+
+    if not updated_post:
+        await progress_msg.edit_text(i18n.get('edit_post_not_found'))
+        await state.clear()
+        return
 
     await progress_msg.delete()
     await state.clear()
 
-    display_text = format_telegram_html(new_text[:TG_SAFE_MESSAGE_LIMIT])
-
+    await send_mod_card_to_chat(bot, message.chat.id, updated_post)
     try:
-        if post.media_path and post.media_type:
-            await bot.edit_message_caption(
-                chat_id=message.chat.id,
-                message_id=mod_card_message_id,
-                caption=display_text,
-                reply_markup=build_mod_card_keyboard(post_id),
-                parse_mode="HTML"
-            )
-        else:
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=mod_card_message_id,
-                text=display_text,
-                reply_markup=build_mod_card_keyboard(post_id),
-                parse_mode="HTML"
-            )
-        await message.reply(i18n.get('ai_edit_success'))
-    except Exception as e:
-        logger.error(f"[Bot] Error updating mod card: {e}")
-        # If edit fails, we just send a new mod card
-        async with async_session_maker() as session:
-            updated_post = await PostRepository.get_post_by_id(session, post_id)
-            if updated_post:
-                await send_mod_card_to_chat(bot, message.chat.id, updated_post)
+        await bot.edit_message_reply_markup(
+            chat_id=message.chat.id,
+            message_id=mod_card_message_id,
+            reply_markup=None,
+        )
+    except TelegramBadRequest as edit_error:
+        logger.warning(f"[Bot] Could not remove old card buttons for post {post_id}: {edit_error}")
+    await message.reply(i18n.get('ai_edit_success'))
 
 
 @router.callback_query(F.data.startswith("change_media_"), IsModeratorFilter())

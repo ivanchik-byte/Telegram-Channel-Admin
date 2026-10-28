@@ -17,7 +17,7 @@ SYSTEM_PROMPT_REWRITE_RU = """Ты — редактор Telegram-канала п
 - Финальные клише: «таким образом», «подводя итог», «а что думаете?», «подписывайтесь»
 - Канцелярит и пассив: «осуществляет», «предоставляет возможность», «с точки зрения», «стоит помнить», «необходимо учитывать»
 - Слова-маркеры ИИ: «безусловно», «несомненно», «прорывной», «революционный», «мощный инструмент», триады «быстро, удобно, эффективно»
-- Эмодзи-буллиты, эмодзи в заголовке. По умолчанию — 0 эмодзи, макс 1 в конце поста
+- Эмодзи-буллиты, эмодзи в заголовке. Эмодзи запрещены во всём посте
 - Одинаковая структура пост в пост
 
 РИТМ:
@@ -89,7 +89,7 @@ FORBIDDEN:
 - Closing cliches: "in conclusion", "to sum up", "what do you think?", "follow for more"
 - Bureaucratic passive voice: "is being utilized", "provides the ability to"
 - AI-marker words: "undoubtedly", "groundbreaking", "revolutionary", "powerful tool", triads like "fast, easy, and reliable"
-- Emoji bullets, emoji in headlines. Default 0 emoji, max 1 at the end of a post
+- Emoji bullets, emoji in headlines. Do not use emoji anywhere in the post
 - Identical structure from post to post
 
 RHYTHM:
